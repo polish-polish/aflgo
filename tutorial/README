@@ -1,0 +1,15 @@
+Before running these scripts, please copy these shell script in your work directory and proof check the exported variables.
+The current default work directory is "/home/yangke/Program/AFL/aflgo".
+
+Tips: 
+
+To tix the installation of gold plugin:
+
+# Install LLVMgold into bfd-plugins
+sudo mkdir /usr/lib/bfd-plugins
+sudo cp /usr/local/lib/libLTO.so /usr/lib/bfd-plugins
+sudo cp /usr/local/lib/LLVMgold.so /usr/lib/bfd-plugins
+
+(libLTO.so and LLVMgold.so are built from llvm)
+For more, please refer https://github.com/aflgo/aflgo/issues/42
+
