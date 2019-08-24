@@ -963,6 +963,13 @@ static inline u8 has_new_bits(u8* virgin_map) {
             (cur[4] && vir[4] == 0xff) || (cur[5] && vir[5] == 0xff) ||
             (cur[6] && vir[6] == 0xff) || (cur[7] && vir[7] == 0xff)) ret = 2;
         else ret = 1;
+        /* add by yangke start */
+
+        printf("interesting!!!! ret=%d\n",ret);
+        printf("vir:%x %x %x %x %x %x %x %x\n",vir[0],vir[1],vir[2],vir[3],vir[4],vir[5],vir[6],vir[7]);
+        printf("cur:%x %x %x %x %x %x %x %x\n",cur[0],cur[1],cur[2],cur[3],cur[4],cur[5],cur[6],cur[7]);
+
+        /* add by yangke end */
 
 #else
 
@@ -1189,7 +1196,7 @@ EXP_ST void init_count_class16(void) {
 #ifdef __x86_64__
 
 static inline void classify_counts(u64* mem) {
-
+  return;//add by yangke
   u32 i = MAP_SIZE >> 3;
 
   while (i--) {
@@ -3327,7 +3334,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
 #endif /* ^!SIMPLE_FILES */
 
-      unique_crashes++;
+      unique_crashes++; exit(0);//add by yangke
 
       last_crash_time = get_cur_time();
       last_crash_execs = total_execs;

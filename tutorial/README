@@ -1,3 +1,13 @@
+Ordered Scripts:
+./1.download_llvm.sh
+./2.prerequisit.sh
+./3.download_compile_aflgo.sh
+./4.download_subject.sh
+./5.set_targets.sh
+./7.get_distance-cfg.sh
+./9.instrument_subject.sh
+./10.construct_seed_corpus_and_fuzz.sh
+
 Before running these scripts, please copy these shell script in your work directory and proof check the exported variables.
 The current default work directory is "/home/yangke/Program/AFL/aflgo".
 
