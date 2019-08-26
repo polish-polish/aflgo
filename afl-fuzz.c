@@ -146,7 +146,11 @@ EXP_ST u8* trace_bits;                /* SHM with instrumentation bitmap  */
 
 EXP_ST u8  virgin_bits[MAP_SIZE],     /* Regions yet untouched by fuzzing */
            virgin_tmout[MAP_SIZE],    /* Bits we haven't seen in tmouts   */
-           virgin_crash[MAP_SIZE];    /* Bits we haven't seen in crashes  */
+           virgin_crash[MAP_SIZE],    /* Bits we haven't seen in crashes  */
+
+           virgin_var_bits[MAP_SIZE]; /* Regions yet untouched by fuzzing,
+                                       specially for key branch variable map
+                                       #add by yangke#                    */
 
 static u8  var_bytes[MAP_SIZE];       /* Bytes that appear to be variable */
 
@@ -996,6 +1000,92 @@ static inline u8 has_new_bits(u8* virgin_map) {
 
 }
 
+/* Check if the current execution path brings any change for the map of key
+ * branch variable values in every execution point.
+ Update virgin bits to reflect the finds. Returns 1 if the only change is
+ the hit-count for a particular tuple; 2 if there are new tuples seen.
+ Updates the map, so subsequent calls will always return 0.
+
+ a tuple:
+ cur_location = <COMPILE_TIME_RANDOM>;
+ shared_mem[cur_location ^ prev_location]++;
+ prev_location = cur_location >> 1;
+ tuple=prev_location^(value%(1<<16));
+ *(u8*)(trace_bits+MAP_SIZE + 8+16+tuple)=0x1;
+ //OPTIMIZE:*(u1*)(trace_bits+MAP_SIZE + 16+tuple)=0x1;
+
+ This function is called after every exec() on a fairly large buffer, so
+ it needs to be fast. We do this in 32-bit and 64-bit flavors. */
+
+  static inline u8 has_new_var_bits(u8* virgin_var_map) {
+
+  #ifdef __x86_64__
+
+    u64* current = (u64*)trace_bits;
+    u64* virgin  = (u64*)virgin_var_map;
+
+    u32  i = (MAP_SIZE >> 3);
+  #else
+
+    u32* current = (u32*)trace_bits;
+    u32* virgin  = (u32*)virgin_var_map;
+
+    u32  i = (MAP_SIZE >> 2);
+  #endif /* ^__x86_64__ */
+
+    u8   ret = 0;
+
+    while (i--) {
+
+      /* Optimize for (*current & *virgin) == 0 - i.e., no bits in current bitmap
+         that have not been already cleared from the virgin map - since this will
+         almost always be the case. */
+
+      if (unlikely(*current) && unlikely(*current & *virgin)) {
+
+        if (likely(ret < 2)) {
+
+          u8* vir = (u8*)virgin_var_map;
+
+          /* Looks like we have not found any new bytes yet; see if any non-zero
+             bytes in current[] are pristine in virgin[]. */
+
+  #ifdef __x86_64__
+          u8* cur = (u8*)current+MAP_SIZE+16;
+
+
+          if ((cur[0] && vir[0] == 0xff) || (cur[1] && vir[1] == 0xff) ||
+              (cur[2] && vir[2] == 0xff) || (cur[3] && vir[3] == 0xff) ||
+              (cur[4] && vir[4] == 0xff) || (cur[5] && vir[5] == 0xff) ||
+              (cur[6] && vir[6] == 0xff) || (cur[7] && vir[7] == 0xff)) ret = 2;
+          else ret = 1;
+
+  #else
+          u8* cur = (u8*)current+MAP_SIZE+8;
+
+          if ((cur[0] && vir[0] == 0xff) || (cur[1] && vir[1] == 0xff) ||
+              (cur[2] && vir[2] == 0xff) || (cur[3] && vir[3] == 0xff)) ret = 2;
+          else ret = 1;
+
+  #endif /* ^__x86_64__ */
+
+        }
+
+        *virgin &= ~*current;
+
+      }
+
+      current++;
+      virgin++;
+
+    }
+
+    //if (ret && virgin_var_map == virgin_var_bits) bitmap_var_changed = 1;
+
+    return ret;
+
+  }
+
 
 /* Count the number of bits set in the provided bitmap. Used for the status
    screen several times every second, does not have to be fast. */
@@ -1102,7 +1192,7 @@ static const u8 simplify_lookup[256] = {
 #ifdef __x86_64__
 
 static void simplify_trace(u64* mem) {
-
+  return; //add by yangke
   u32 i = MAP_SIZE >> 3;
 
   while (i--) {
@@ -1400,8 +1490,10 @@ EXP_ST void setup_shm(void) {
   memset(virgin_tmout, 255, MAP_SIZE);
   memset(virgin_crash, 255, MAP_SIZE);
 
+  memset(virgin_var_bits, 255, MAP_SIZE);
+
   /* Allocate 24 byte more for distance info */
-  shm_id = shmget(IPC_PRIVATE, MAP_SIZE + 16, IPC_CREAT | IPC_EXCL | 0600);
+  shm_id = shmget(IPC_PRIVATE, MAP_SIZE+ MAP_SIZE+ 16, IPC_CREAT | IPC_EXCL | 0600);
 
   if (shm_id < 0) PFATAL("shmget() failed");
 
@@ -3199,7 +3291,13 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
     if (!(hnb = has_new_bits(virgin_bits))) {
       if (crash_mode) total_crashes++;
-      return 0;
+      //return 0;//add by yangke
+      if(has_new_var_bits(virgin_var_bits)){
+    	  //TODO: analyze valid input bytes and promising mutation opeartions
+      }
+      else{
+    	  return 0;
+      }
     }    
 
 #ifndef SIMPLE_FILES
