@@ -98,6 +98,8 @@ protected:
 			GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M);
 	size_t hashName(Value *v);
 	void debug(Value *v);
+	void bbRecord(unsigned int cur_loc, BasicBlock &BB,
+			std::ofstream &bbname_id_pairs);
 };
 
 }
@@ -106,7 +108,62 @@ char AFLCoverage::ID = 0;
 /* add by yangke start */
 unsigned AFLCoverage::instrument_cnt = 0;
 /* add by yangke end */
-void AFLCoverage::debug(Value *v){//contains format string vulnerability
+void AFLCoverage::bbRecord(unsigned int cur_loc, BasicBlock &BB,
+		std::ofstream &bbname_id_pairs) {
+	std::string bb_name("");
+	std::string filename;
+	unsigned line;
+	for (auto &I : BB) {
+#ifdef LLVM_OLD_DEBUG_API
+		DebugLoc Loc = I.getDebugLoc();
+		if (!Loc.isUnknown()) {
+
+			DILocation cDILoc(Loc.getAsMDNode(M.getContext()));
+			DILocation oDILoc = cDILoc.getOrigLocation();
+
+			line = oDILoc.getLineNumber();
+			filename = oDILoc.getFilename().str();
+
+			if (filename.empty()) {
+				line = cDILoc.getLineNumber();
+				filename = cDILoc.getFilename().str();
+			}
+#else
+
+		if (DILocation *Loc = I.getDebugLoc()) {
+			line = Loc->getLine();
+			filename = Loc->getFilename().str();
+
+			if (filename.empty()) {
+				DILocation *oDILoc = Loc->getInlinedAt();
+				if (oDILoc) {
+					line = oDILoc->getLine();
+					filename = oDILoc->getFilename().str();
+				}
+			}
+
+#endif /* LLVM_OLD_DEBUG_API */
+
+			/* Don't worry about external libs */
+			std::string Xlibs("/usr/");
+			if (filename.empty() || line == 0
+					|| !filename.compare(0, Xlibs.size(), Xlibs))
+				continue;
+
+			if (bb_name.empty()) {
+
+				std::size_t found = filename.find_last_of("/\\");
+				if (found != std::string::npos)
+					filename = filename.substr(found + 1);
+
+				bb_name = filename + ":" + std::to_string(line);
+				break;
+			}
+		}
+	}
+	bbname_id_pairs << bb_name << "," << cur_loc << "\n";
+}
+void AFLCoverage::debug(Value *v) { //contains format string vulnerability
 	std::string var_str;
 	llvm::raw_string_ostream rso(var_str);
 	v->print(rso);
@@ -153,7 +210,7 @@ void AFLCoverage::mapValue(ICmpInst *icmp, Value *v, GlobalVariable *AFLMapPtr,
 
 	/* Load prev_loc */
 
-	LoadInst *PrevLoc = IRB.CreateLoad(AFLPrevLoc);//i32
+	LoadInst *PrevLoc = IRB.CreateLoad(AFLPrevLoc);	//i32
 	PrevLoc->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
 #ifdef __x86_64__
 	IntegerType *LargestType = Int64Ty;
@@ -163,10 +220,10 @@ void AFLCoverage::mapValue(ICmpInst *icmp, Value *v, GlobalVariable *AFLMapPtr,
 	 * Value *ValueCasted = IRB.CreateTrunc(v, IRB.getInt64Ty());//Error
 	 * Don't do it! i32 or i8 cannot cast to i64, Please USE IRB.CreateZExt(v1,type1);
 	 * fatal error: error in backend: Cannot select: 0x3edd8d0: i64 = truncate
-      0x3ed1260
-  0x3ed1260: i32,ch = load<LD4[%21](dereferenceable)> 0x3ed0b78, FrameIndex:i64<6>, undef:i64
-    0x3ed11f8: i64 = FrameIndex<6>
-    0x3ed0c48: i64 = undef
+	 0x3ed1260
+	 0x3ed1260: i32,ch = load<LD4[%21](dereferenceable)> 0x3ed0b78, FrameIndex:i64<6>, undef:i64
+	 0x3ed11f8: i64 = FrameIndex<6>
+	 0x3ed0c48: i64 = undef
 	 */
 	ConstantInt * VNameHash = ConstantInt::get(Int64Ty, hashName(v));//Hash Variable Name to i64
 	Value *PrevLocCasted = IRB.CreateZExt(PrevLoc, IRB.getInt64Ty());//i32 to i64
@@ -189,27 +246,24 @@ void AFLCoverage::mapValue(ICmpInst *icmp, Value *v, GlobalVariable *AFLMapPtr,
 	LoadInst *MapPtr = IRB.CreateLoad(AFLMapPtr); //load u8
 	debug(MapPtr);
 	MapPtr->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-	Value *MapValuePtrStart = IRB.CreateGEP(MapPtr, MapVarLocStart);//
-
+	Value *MapValuePtrStart = IRB.CreateGEP(MapPtr, MapVarLocStart); //
 
 #ifdef __x86_64__
 	/* Low 16bit for Byte Location; High 3bit for bit location in the Byte.*/
-	ConstantInt * MaskLow16= ConstantInt::get(LargestType, (1<<16)-1);
+	ConstantInt * MaskLow16 = ConstantInt::get(LargestType, (1 << 16) - 1);
 	Value * pos1 = IRB.CreateAnd(PVN, MaskLow16);
-    ///Value * sum= IRB.CreateAdd(pos1,MapVarLocStart);
+	///Value * sum= IRB.CreateAdd(pos1,MapVarLocStart);
 	Value * t1 = IRB.CreateLShr(PVN, ConstantInt::get(LargestType, 16));
 
 	Value * b1 = IRB.CreateAnd(t1, ConstantInt::get(LargestType, (1 << 3) - 1));
 	Value * bv1 = IRB.CreateShl(ConstantInt::get(LargestType, 1), b1);
-	Value * Ptr1 = IRB.CreateGEP(MapValuePtrStart, pos1);//
+	Value * Ptr1 = IRB.CreateGEP(MapValuePtrStart, pos1); //
 	///Value * Ptr1 = IRB.CreateGEP(MapPtr, sum);
-
 
 	LoadInst *OriginByte = IRB.CreateLoad(Ptr1);
 	Value * byte1 = IRB.CreateOr(OriginByte, bv1);
 	StoreInst *myStore = IRB.CreateStore(byte1, Ptr1);
 	myStore->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-
 
 	Value *PVN_ = IRB.CreateLShr(PVN, ConstantInt::get(LargestType, 19));
 	pos1 = IRB.CreateTrunc(PVN_, IRB.getInt16Ty());
@@ -257,7 +311,6 @@ void AFLCoverage::mapValue(ICmpInst *icmp, Value *v, GlobalVariable *AFLMapPtr,
 	myStore = IRB.CreateStore(byte1, Ptr1);
 	myStore->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
 #endif
-
 
 	/*
 	 // Load SHM pointer
@@ -314,7 +367,14 @@ bool AFLCoverage::runOnModule(Module &M) {
 		is_aflgo_preprocessing = true;
 
 	} else if (!DistanceFile.empty()) {
-
+		if (OutDirectory.empty()) {
+			FATAL("Provide output directory '-outdir <directory>'");
+			FATAL(
+					"We need to out put <BBname,RandomID> pairs into <directory>/bbname_rid_pairs.txt");
+			FATAL(
+					"TIP:<BBname>::=<filename>:<linenum>  e.g 'entry.c:45,1804289383'");
+			return false;
+		}
 		std::ifstream cf(DistanceFile.c_str());
 		if (cf.is_open()) {
 
@@ -432,7 +492,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 		std::string dotfiles(OutDirectory + "/dot-files");
 		if (stat(dotfiles.c_str(), &sb) != 0) {
 			const int dir_err = mkdir(dotfiles.c_str(),
-					S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+			S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
 			if (-1 == dir_err)
 				FATAL("Could not create directory %s.", dotfiles.c_str());
 		}
@@ -611,7 +671,13 @@ bool AFLCoverage::runOnModule(Module &M) {
 		ftargets.close();
 
 	} else {
+		/*add by yangke start*/
+		std::ofstream bbname_id_pairs;
+		OKF("#Dump <<BBname>,RandomId> pairs to :%s", (OutDirectory + "/bbname_rid_pairs.txt\n").c_str());
+		bbname_id_pairs.open(OutDirectory + "/bbname_rid_pairs.txt",
+				std::ofstream::out | std::ofstream::app);
 
+		/*add by yangke end*/
 		for (auto &F : M) {
 
 			int distance = -1;
@@ -885,6 +951,9 @@ bool AFLCoverage::runOnModule(Module &M) {
 				/* Make up cur_loc */
 
 				unsigned int cur_loc = AFL_R(MAP_SIZE);
+				/*add by yangke start*/
+				bbRecord(cur_loc, BB, bbname_id_pairs);
+				/*add by yangke end*/
 
 				ConstantInt *CurLoc = ConstantInt::get(Int32Ty, cur_loc);
 
@@ -921,16 +990,16 @@ bool AFLCoverage::runOnModule(Module &M) {
 				Store->setMetadata(M.getMDKindID("nosanitize"),
 						MDNode::get(C, None));
 
-				if (distance >= 0) {
+				if (distance != -1) {
 
 					unsigned int udistance = (unsigned) distance;
 
 #ifdef __x86_64__
 					IntegerType *LargestType = Int64Ty;
 					ConstantInt *MapDistLoc = ConstantInt::get(LargestType,
-							MAP_SIZE);
+					MAP_SIZE);
 					ConstantInt *MapCntLoc = ConstantInt::get(LargestType,
-							MAP_SIZE + 8);
+					MAP_SIZE + 8);
 					ConstantInt *Distance = ConstantInt::get(LargestType,
 							udistance);
 #else
@@ -977,6 +1046,9 @@ bool AFLCoverage::runOnModule(Module &M) {
 
 			}
 		}
+		/*add by yangke start*/
+		bbname_id_pairs.close();
+		/*add by yangke end*/
 	}
 
 	/* Say something nice. */

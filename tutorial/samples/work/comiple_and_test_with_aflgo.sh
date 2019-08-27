@@ -4,7 +4,7 @@ export TMP_DIR=/home/yangke/Program/AFL/aflgo/tutorial/samples/work/temp
 export ADDITIONAL="-targets=$TMP_DIR/BBtargets.txt -outdir=$TMP_DIR -flto -fuse-ld=gold -Wl,-plugin-opt=save-temps"
 export LDFLAGS=-lpthread
 export SUBJECT=/home/yangke/Program/AFL/aflgo/samples/work
-if [ $1 neq '-' ] ; then
+if [ "$1" != "-" ] ; then
 if [ ! -f ./entry.c ]; then
     exit 1
 fi
@@ -37,8 +37,8 @@ echo "..."
 tail -n5 $TMP_DIR/distance.cfg.txt
 
 
-export CFLAGS="-distance=$TMP_DIR/distance.cfg.txt"
-export CXXFLAGS="-distance=$TMP_DIR/distance.cfg.txt"
+export CFLAGS="-distance=$TMP_DIR/distance.cfg.txt -outdir=$TMP_DIR"
+export CXXFLAGS="-distance=$TMP_DIR/distance.cfg.txt -outdir=$TMP_DIR"
 
 $CC $CFLAGS  ./entry.c -o entry_profiled
 
