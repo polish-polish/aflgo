@@ -1,9 +1,9 @@
 #!/bin/bash
 export AFLGO=/home/yangke/Program/AFL/aflgo/aflgo
-export TMP_DIR=/home/yangke/Program/AFL/aflgo/tutorial/samples/work/temp
+export TMP_DIR=/home/yangke/Program/AFL/aflgo/aflgo/tutorial/samples/work/temp
 export ADDITIONAL="-targets=$TMP_DIR/BBtargets.txt -outdir=$TMP_DIR -flto -fuse-ld=gold -Wl,-plugin-opt=save-temps"
 export LDFLAGS=-lpthread
-export SUBJECT=/home/yangke/Program/AFL/aflgo/samples/work
+export SUBJECT=/home/yangke/Program/AFL/aflgo/aflgo/tutorial/samples/work
 if [ "$1" != "-" ] ; then
 if [ ! -f ./entry.c ]; then
     exit 1

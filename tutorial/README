@@ -13,7 +13,7 @@ The current default work directory is "/home/yangke/Program/AFL/aflgo".
 
 Tips: 
 
-To tix the installation of gold plugin:
+To fix the installation of gold plugin:
 
 # Install LLVMgold into bfd-plugins
 sudo mkdir /usr/lib/bfd-plugins
