@@ -25,6 +25,9 @@
 
 #define _GNU_SOURCE
 #define _FILE_OFFSET_BITS 64
+/* add by yangke start*/
+#define THRESHOLD_CYCLES_WO_FINDS 2
+/* add by yangke end */
 
 #include "config.h"
 #include "types.h"
@@ -55,6 +58,9 @@
 #include <sys/mman.h>
 #include <sys/ioctl.h>
 #include <sys/file.h>
+/* add by yangke start */
+//#include <igraph.h>
+/* add by yangke end */
 
 #include <math.h>
 
@@ -91,7 +97,8 @@ EXP_ST u8 *in_dir,                    /* Input directory with test cases  */
           *in_bitmap,                 /* Input bitmap                     */
           *doc_path,                  /* Path to documentation dir        */
           *target_path,               /* Path to target binary            */
-          *orig_cmdline;              /* Original command line            */
+          *orig_cmdline,              /* Original command line            */
+          *cfg_directory;             /* Temp dir  that contains CFG info */
 
 EXP_ST u32 exec_tmout = EXEC_TIMEOUT; /* Configurable exec timeout (ms)   */
 static u32 hang_tmout = EXEC_TIMEOUT; /* Timeout used for hang det (ms)   */
@@ -144,13 +151,22 @@ static s32 forksrv_pid,               /* PID of the fork server           */
 
 EXP_ST u8* trace_bits;                /* SHM with instrumentation bitmap  */
 
+
+
 EXP_ST u8  virgin_bits[MAP_SIZE],     /* Regions yet untouched by fuzzing */
            virgin_tmout[MAP_SIZE],    /* Bits we haven't seen in tmouts   */
-           virgin_crash[MAP_SIZE],    /* Bits we haven't seen in crashes  */
+           virgin_crash[MAP_SIZE];    /* Bits we haven't seen in crashes  */
 
-           virgin_var_bits[MAP_SIZE]; /* Regions yet untouched by fuzzing,
+#ifdef __x86_64__
+EXP_ST u64 virgin_var_bits[MAP_SIZE]; /* Regions yet untouched by fuzzing,
                                        specially for key branch variable map
-                                       #add by yangke#                    */
+                                       # add by yangke #                  */
+#else
+EXP_ST u32 virgin_var_bits[MAP_SIZE]; /* Regions yet untouched by fuzzing,
+                                       specially for key branch variable map
+                                       # add by yangke #                  */
+#endif
+
 
 static u8  var_bytes[MAP_SIZE];       /* Bytes that appear to be variable */
 
@@ -298,6 +314,11 @@ static u8* (*post_handler)(u8* buf, u32* len);
 static s8  interesting_8[]  = { INTERESTING_8 };
 static s16 interesting_16[] = { INTERESTING_8, INTERESTING_16 };
 static s32 interesting_32[] = { INTERESTING_8, INTERESTING_16, INTERESTING_32 };
+/* add by yangke start */
+static u8 margin_bb_query_by_rid[1<<16]; //TODO :replace 1<<16 with MAX_VERTEX_NUM
+static int margin_bb_rid[1<<16];
+static int margin_bb_count=0;
+/* add by yangke end */
 
 /* Fuzzing stages */
 
@@ -1000,91 +1021,49 @@ static inline u8 has_new_bits(u8* virgin_map) {
 
 }
 
-/* Check if the current execution path brings any change for the map of key
+/* Check if the current execution path brings any change for the map of margin key
  * branch variable values in every execution point.
- Update virgin bits to reflect the finds. Returns 1 if the only change is
- the hit-count for a particular tuple; 2 if there are new tuples seen.
- Updates the map, so subsequent calls will always return 0.
+ * Update virgin_var_bits to reflect the finds. Returns 1 for finding the change, and 0 otherwise.
+ * This information is for prioritizing mutation positions and operations
+ */
 
- a tuple:
- cur_location = <COMPILE_TIME_RANDOM>;
- shared_mem[cur_location ^ prev_location]++;
- prev_location = cur_location >> 1;
- tuple=prev_location^(value%(1<<16));
- *(u8*)(trace_bits+MAP_SIZE + 8+16+tuple)=0x1;
- //OPTIMIZE:*(u1*)(trace_bits+MAP_SIZE + 16+tuple)=0x1;
-
- This function is called after every exec() on a fairly large buffer, so
- it needs to be fast. We do this in 32-bit and 64-bit flavors. */
-
-  static inline u8 has_new_var_bits(u8* virgin_var_map) {
-
-  #ifdef __x86_64__
-
-    u64* current = (u64*)trace_bits;
-    u64* virgin  = (u64*)virgin_var_map;
-
-    u32  i = (MAP_SIZE >> 3);
-  #else
-
-    u32* current = (u32*)trace_bits;
-    u32* virgin  = (u32*)virgin_var_map;
-
-    u32  i = (MAP_SIZE >> 2);
-  #endif /* ^__x86_64__ */
-
-    u8   ret = 0;
-
-    while (i--) {
-
-      /* Optimize for (*current & *virgin) == 0 - i.e., no bits in current bitmap
-         that have not been already cleared from the virgin map - since this will
-         almost always be the case. */
-
-      if (unlikely(*current) && unlikely(*current & *virgin)) {
-
-        if (likely(ret < 2)) {
-
-          u8* vir = (u8*)virgin_var_map;
-
-          /* Looks like we have not found any new bytes yet; see if any non-zero
-             bytes in current[] are pristine in virgin[]. */
-
-  #ifdef __x86_64__
-          u8* cur = (u8*)current+MAP_SIZE+16;
-
-
-          if ((cur[0] && vir[0] == 0xff) || (cur[1] && vir[1] == 0xff) ||
-              (cur[2] && vir[2] == 0xff) || (cur[3] && vir[3] == 0xff) ||
-              (cur[4] && vir[4] == 0xff) || (cur[5] && vir[5] == 0xff) ||
-              (cur[6] && vir[6] == 0xff) || (cur[7] && vir[7] == 0xff)) ret = 2;
-          else ret = 1;
-
-  #else
-          u8* cur = (u8*)current+MAP_SIZE+8;
-
-          if ((cur[0] && vir[0] == 0xff) || (cur[1] && vir[1] == 0xff) ||
-              (cur[2] && vir[2] == 0xff) || (cur[3] && vir[3] == 0xff)) ret = 2;
-          else ret = 1;
-
-  #endif /* ^__x86_64__ */
-
-        }
-
-        *virgin &= ~*current;
-
-      }
-
-      current++;
-      virgin++;
-
-    }
-
-    //if (ret && virgin_var_map == virgin_var_bits) bitmap_var_changed = 1;
-
-    return ret;
-
+#ifdef __x86_64__
+  static  inline u8 has_new_var_bits(u64* virgin_var_map) {
+	u8  ret = 0;
+	u64* vir = (u64*) virgin_var_map;
+	u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
+	for(int i=0;i<margin_bb_count;i++){
+		int rid=margin_bb_rid[i];
+		if(cur[rid] ^ vir[rid]){
+			OKF("margin_bb_count=%d",margin_bb_count);
+			for(int j=0;j<margin_bb_count;j++){
+				OKF("%d:rid=%d,cur[rid]=%llx,vir[rid]=%llx",j,rid,cur[margin_bb_rid[j]] , vir[margin_bb_rid[j]]);
+			}
+			ret=1;
+		}
+		vir[rid]=cur[rid];
+		vir++;
+		cur++;
+	}
+	return ret;
   }
+#else
+  static inline u8 has_new_var_bits(u32* virgin_var_map) {
+	    u8  ret = 0;
+	    u32* vir = (u32*) virgin_var_map;
+	    u32* cur = (u32*)(trace_bits+MAP_SIZE+8);
+
+	    for(int i=0;i<margin_bb_count;i++,vir++,cur++){
+	    	int rid=margin_bb_rid[i];
+	    	if(cur[rid] ^ vir[rid]){
+	    		ret=1;
+	    	}
+	    	vir[rid]=cur[rid];
+	    }
+	    return ret;
+  }
+#endif /* ^__x86_64__ */
+
 
 
 /* Count the number of bits set in the provided bitmap. Used for the status
@@ -1489,11 +1468,21 @@ EXP_ST void setup_shm(void) {
 
   memset(virgin_tmout, 255, MAP_SIZE);
   memset(virgin_crash, 255, MAP_SIZE);
-
-  memset(virgin_var_bits, 255, MAP_SIZE);
-
+#ifdef __x86_64__
+  memset(virgin_var_bits, 255, MAP_SIZE<<3);
+  shm_id = shmget(IPC_PRIVATE, MAP_SIZE + 16 + (MAP_SIZE<<3), IPC_CREAT | IPC_EXCL | 0600);
+#else
+  memset(virgin_var_bits, 255, MAP_SIZE<<2);
+  shm_id = shmget(IPC_PRIVATE, MAP_SIZE + 16 + (MAP_SIZE<<2), IPC_CREAT | IPC_EXCL | 0600);
+#endif
   /* Allocate 24 byte more for distance info */
-  shm_id = shmget(IPC_PRIVATE, MAP_SIZE+ MAP_SIZE+ 16, IPC_CREAT | IPC_EXCL | 0600);
+  /* add by yangke:
+   * (1) It seems only allocate 16 byte for distance info
+   * (2) allocate 64KB to record triggerd BB RandomId
+   * (3) allocate 64KB to map branch variables' values for each BB */
+  /* : why not 16 */
+
+
 
   if (shm_id < 0) PFATAL("shmget() failed");
 
@@ -1513,7 +1502,11 @@ EXP_ST void setup_shm(void) {
   trace_bits = shmat(shm_id, NULL, 0);
   
   if (!trace_bits) PFATAL("shmat() failed");
-
+#ifdef __x86_64__
+  memset(trace_bits, 255, MAP_SIZE + 16 + (MAP_SIZE<<3));
+#else
+  memset(trace_bits, 255, MAP_SIZE + 8 + (MAP_SIZE<<2));
+#endif
 }
 
 
@@ -3271,8 +3264,146 @@ static void write_crash_readme(void) {
   fclose(f);
 
 }
+/* add by yangke start */
+/* Load all static CFG as one */
+//TODO: change it as a structure
+#define MAX_VERTEX_NUM MAP_SIZE
+#define MAX_EDGE_NUM (MAP_SIZE<<3)
+int out_edge_index[MAX_EDGE_NUM][2];
+int in_edge_index[MAX_EDGE_NUM][2];
+static int vertex_index[MAX_VERTEX_NUM];
+
+u8 bb_cov_map_by_rid[MAX_VERTEX_NUM];//cov:1,uncov:0
+u8 out_edge_cov_index[MAX_EDGE_NUM];//cov:1,uncov:0
+
+static int vertex_num=0;
+static int edge_num=0;
+static int cfg_loaded=0;
+static void loadCFG() {
+
+	u8 *fn = alloc_printf("%s/%s",cfg_directory, "/node_index.txt");
+	OKF("node_index=%s",fn);
+	FILE * f;
+	if (!(f = fopen(fn, "r"))) {
+		ck_free(fn);
+	}
+	vertex_num=0;
+    u8 tmp[MAX_LINE];
+	while (fgets(tmp, MAX_LINE, f)) {
+		if(vertex_num>=MAX_VERTEX_NUM){
+			FATAL("Error occured when loading CFG, vertex overflow!!");
+		}
+		int rid=atoi(tmp);
+		OKF("rid:%d",rid);
+		vertex_index[vertex_num]=rid;
+		bb_cov_map_by_rid[rid]=0;//mix coverage init process.TODO: decouple
+		vertex_num++;
+	}
+	vertex_index[vertex_num]=-1;
+	//OKF("Total: %d vertexes.",vertex_num);
+	ck_free(fn);
+	fclose(f);
 
 
+	fn = alloc_printf("%s/%s",cfg_directory, "/out_edge_index.txt");
+	OKF("Load out_edge_index from file %s",fn);
+	if (!(f = fopen(fn, "r"))) {
+		ck_free(fn);
+	}
+	edge_num=0;
+	while (fgets(tmp, MAX_LINE, f)) {
+		if(edge_num>=MAX_EDGE_NUM){
+			FATAL("Error occured when loading CFG, edges overflow!!");
+		}
+		///OKF("orig_out:%s",strtok(tmp,"\n"));
+		char * first=strtok(tmp,",");
+		char * second=strtok(NULL,",");
+
+		out_edge_index[edge_num][0]=atoi(first);
+		out_edge_index[edge_num][1]=atoi(second);
+		out_edge_cov_index[edge_num]=0;//mix coverage init process.TODO: decouple
+		OKF("edge_out:%d,%d",out_edge_index[edge_num][0],out_edge_index[edge_num][1]);
+		edge_num++;
+	}
+	out_edge_index[edge_num][0]=-1;out_edge_index[edge_num][1]=-1;//elements ends with value -1
+	OKF("Total: %d out_edges.",edge_num);
+	ck_free(fn);
+	fclose(f);
+
+	fn = alloc_printf("%s/%s",cfg_directory, "/in_edge_index.txt");
+	OKF("Load in_edge_index from file %s",fn);
+	if (!(f = fopen(fn, "r"))) {
+		ck_free(fn);
+	}
+	edge_num=0;
+	while (fgets(tmp, MAX_LINE, f)) {
+		if(edge_num>=MAX_EDGE_NUM){
+			FATAL("Error occured when loading CFG, edges overflow!!");
+		}
+		///OKF("orig_in:%s",strtok(tmp,"\n"));
+		char * first=strtok(tmp,",");
+		char * second=strtok(NULL,",");
+
+		in_edge_index[edge_num][0]=atoi(first);
+		in_edge_index[edge_num][1]=atoi(second);
+		OKF("edge_in:%d,%d",in_edge_index[edge_num][0],in_edge_index[edge_num][1]);
+		edge_num++;
+	}
+	in_edge_index[edge_num][0]=-1;in_edge_index[edge_num][1]=-1;//elements ends with value -1
+	OKF("Total: %d in_edges.",edge_num);
+	ck_free(fn);
+	fclose(f);
+	cfg_loaded=1;
+	//FATAL("KILL BY YANGKE loadCFG.");
+}
+
+
+
+/* prioritize Basic Blocks(idendified by random id(RID)) located at the margin
+ * area of the covered code.
+ */
+
+static void update_margin_bbs()
+{
+    /*1. update coverage information and clean margin*/
+	for(int i=0;i<edge_num && out_edge_index[i][0]!=-1;i++)
+	{
+		int start=out_edge_index[i][0];
+		int end=out_edge_index[i][1];
+		if (virgin_bits[(start>>1)^end]==0xff)
+		{
+			out_edge_cov_index[i]=0;
+		}
+		else{
+			out_edge_cov_index[i]=1;
+			bb_cov_map_by_rid[start]=1;
+			bb_cov_map_by_rid[end]=1;
+		}
+	}
+
+	/*2 clean margin record*/
+	for(int i=0;i<vertex_num && vertex_index[i]!=-1;i++)
+	{
+		margin_bb_query_by_rid[vertex_index[i]]=0;
+		margin_bb_rid[i]=-1;
+	}
+	margin_bb_count=0;
+	/*3. find and record margin basic blocks.*/
+	for(int i=0;i<edge_num && out_edge_index[i][0]!=-1;i++)
+	{
+		int start=out_edge_index[i][0];
+		int end=out_edge_index[i][1];
+		if (virgin_bits[(start>>1)^end]==0xff && bb_cov_map_by_rid[start]){
+			if(margin_bb_query_by_rid[start]==0){
+				margin_bb_query_by_rid[start]=1;
+				margin_bb_rid[margin_bb_count++]=start;
+			}
+
+		}
+	}
+	//FATAL("KILL BY YANGKE update_margin_bbs.");
+}
+/* add by yangke end */
 /* Check if the result of an execve() during routine fuzzing is interesting,
    save or queue the input test case for further analysis if so. Returns 1 if
    entry is saved, 0 otherwise. */
@@ -3292,12 +3423,22 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     if (!(hnb = has_new_bits(virgin_bits))) {
       if (crash_mode) total_crashes++;
       //return 0;//add by yangke
-      if(has_new_var_bits(virgin_var_bits)){
-    	  //TODO: analyze valid input bytes and promising mutation opeartions
-      }
-      else{
-    	  return 0;
-      }
+      /* add by yangke start */
+	  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
+	      if (!cfg_loaded)
+	    	  loadCFG();
+	      update_margin_bbs();
+		  if(has_new_var_bits(virgin_var_bits)){
+			  FATAL("branch variable value changed in this mutation! We find an optimize point!");
+			  //TODO: analyze valid input bytes and promising mutation opeartions
+		  }
+		  else{
+			  return 0;
+		  }
+	  }else{
+		  return 0;
+	  }
+	  /* add by yangke end */
     }    
 
 #ifndef SIMPLE_FILES
@@ -7937,7 +8078,7 @@ int main(int argc, char** argv) {
   gettimeofday(&tv, &tz);
   srandom(tv.tv_sec ^ tv.tv_usec ^ getpid());
 
-  while ((opt = getopt(argc, argv, "+i:o:f:m:t:T:dnCB:S:M:x:Qz:c:")) > 0)
+  while ((opt = getopt(argc, argv, "+i:o:f:m:t:T:dnCB:S:M:x:Qz:c:E:")) > 0)
 
     switch (opt) {
 
@@ -8139,9 +8280,13 @@ int main(int argc, char** argv) {
           }
 
         }
-
         break;
-
+      /* add by yangke start */
+      case 'E': /* Input Directory for Static Control Flow Graph info */
+    	if(!strcmp(optarg, "")) FATAL("Please specify the directory for CFG. e.g -E <cfg_directory>");
+    	cfg_directory=optarg;
+        break;
+      /* add by yangke end */
       default:
 
         usage(argv[0]);
@@ -8288,7 +8433,11 @@ int main(int argc, char** argv) {
 
       if (queued_paths == prev_queued) {
 
-        if (use_splicing) cycles_wo_finds++; else use_splicing = 1;
+        if (use_splicing) {
+        	cycles_wo_finds++;
+        }else{
+        	use_splicing = 1;
+        }
 
       } else cycles_wo_finds = 0;
 
@@ -8314,7 +8463,6 @@ int main(int argc, char** argv) {
 
     queue_cur = queue_cur->next;
     current_entry++;
-
   }
 
   if (queue_cur) show_stats();

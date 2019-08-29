@@ -42,6 +42,8 @@ export CXXFLAGS="-distance=$TMP_DIR/distance.cfg.txt -outdir=$TMP_DIR"
 
 $CC $CFLAGS  ./entry.c -o entry_profiled
 
+$AFLGO/scripts/index_all_cfg_edges.py -d $TMP_DIR/dot-files
+
 
 # Construct seed corpus
 if [ ! -d ./in ] ;then
@@ -53,5 +55,5 @@ cp abc in
 rm -rf ./out
 fi
 #gdb --args $AFLGO/afl-fuzz -S entry_result -z exp -c 2m -i in -o out $SUBJECT/entry_profiled @@
-/usr/bin/time -a -o time.txt $AFLGO/afl-fuzz -S entry_result -z exp -c 1m -i in -o out $SUBJECT/entry_profiled @@
+/usr/bin/time -a -o time.txt $AFLGO/afl-fuzz -S entry_result -z exp -c 1m -i in -o out -E $TMP_DIR $SUBJECT/entry_profiled @@
 

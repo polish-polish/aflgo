@@ -95,7 +95,8 @@ public:
 	bool runOnModule(Module &M) override;
 protected:
 	void mapValue(ICmpInst *icmp, Value *v, GlobalVariable *AFLMapPtr,
-			GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M);
+			GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
+			unsigned int cur_loc);
 	size_t hashName(Value *v);
 	void debug(Value *v);
 	void bbRecord(unsigned int cur_loc, BasicBlock &BB,
@@ -175,28 +176,28 @@ size_t AFLCoverage::hashName(Value *v) {
 	v->print(rso);
 	OKF("#Now we hash var#:%s", var_str.c_str());
 	int pos = var_str.find("=", 0);
-	std::hash<std::string> str_hash;
+	std::hash < std::string > str_hash;
 	std::string name_str = var_str;
 	if (pos != -1) {
 		name_str = var_str.substr(0, pos);
 	}
-	return (size_t) (str_hash(name_str));
+	return (size_t)(str_hash(name_str));
 
 }
 void AFLCoverage::mapValue(ICmpInst *icmp, Value *v, GlobalVariable *AFLMapPtr,
-		GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M) {
+		GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
+		unsigned int cur_loc) {
+
 	LLVMContext &C = M.getContext();
-	IntegerType *Int8Ty = IntegerType::getInt8Ty(C);
-	IntegerType *Int16Ty = IntegerType::getInt16Ty(C);
-	IntegerType *Int32Ty = IntegerType::getInt32Ty(C);
+	//IntegerType *Int8Ty  = IntegerType::getInt8Ty(C);
+	//IntegerType *Int32Ty = IntegerType::getInt32Ty(C);
 	IntegerType *Int64Ty = IntegerType::getInt64Ty(C);
 	BasicBlock::iterator myIP = BB.getFirstInsertionPt();
 	BasicBlock::iterator InsertIP = myIP;
 	while (myIP != BB.end()) {
 		InsertIP = myIP;
-		if (ICmpInst * temp = dyn_cast<ICmpInst>(&(*myIP))) {
+		if (ICmpInst * temp = dyn_cast < ICmpInst > (&(*myIP))) {
 			if (icmp == temp) {
-				errs() << "Instrument after the ICmpInst!!\n";
 				InsertIP = ++myIP;
 				break;
 			}
@@ -205,136 +206,36 @@ void AFLCoverage::mapValue(ICmpInst *icmp, Value *v, GlobalVariable *AFLMapPtr,
 		myIP++;
 	}
 	IRBuilder<> IRB(&(*InsertIP));
-	//unsigned int cur_var_loc = AFL_R(MAP_SIZE);
 	//use Int64Ty
+	/* Load SHM pointer */
 
-	/* Load prev_loc */
+	LoadInst *MapPtr = IRB.CreateLoad(AFLMapPtr);
 
-	LoadInst *PrevLoc = IRB.CreateLoad(AFLPrevLoc);	//i32
-	PrevLoc->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+	debug(MapPtr);
+
 #ifdef __x86_64__
 	IntegerType *LargestType = Int64Ty;
-	ConstantInt *MapVarLocStart = ConstantInt::get(LargestType, MAP_SIZE + 16);
-	// Make Sure your memory is allocated correctly
-	/*
-	 * Value *ValueCasted = IRB.CreateTrunc(v, IRB.getInt64Ty());//Error
-	 * Don't do it! i32 or i8 cannot cast to i64, Please USE IRB.CreateZExt(v1,type1);
-	 * fatal error: error in backend: Cannot select: 0x3edd8d0: i64 = truncate
-	 0x3ed1260
-	 0x3ed1260: i32,ch = load<LD4[%21](dereferenceable)> 0x3ed0b78, FrameIndex:i64<6>, undef:i64
-	 0x3ed11f8: i64 = FrameIndex<6>
-	 0x3ed0c48: i64 = undef
-	 */
-	ConstantInt * VNameHash = ConstantInt::get(Int64Ty, hashName(v));//Hash Variable Name to i64
-	Value *PrevLocCasted = IRB.CreateZExt(PrevLoc, IRB.getInt64Ty());//i32 to i64
-	debug(PrevLocCasted);
-	//ConstantInt *MapValueLoc = ConstantInt::get(Int64Ty, cur_var_loc);
+	ConstantInt *MapVarLocStart = ConstantInt::get(LargestType, MAP_SIZE +16);
+	ConstantInt *MapValueLoc = ConstantInt::get(LargestType, cur_loc<<3);
 #else
 	IntegerType *LargestType = Int32Ty;
-	ConstantInt *MapVarLocStart = ConstantInt::get(LargestType, MAP_SIZE+8);
-
-	ConstantInt * VNameHash= ConstantInt::get(LargestType, hashName(v));
-	Value *PrevLocCasted = PrevLoc; //i32 to i32
-	//Value *PrevLocCasted = IRB.CreateZExt(PrevLoc, IRB.getInt32Ty());
-	//ConstantInt *MapValueLoc = ConstantInt::get(Int32Ty, cur_var_loc);
+	ConstantInt *MapVarLocStart = ConstantInt::get(LargestType, MAP_SIZE +16);
+	ConstantInt *MapValueLoc = ConstantInt::get(LargestType, cur_loc<<2);
 #endif
 
-	Value * VN = IRB.CreateXor(v, VNameHash);
-	Value * PVN = IRB.CreateXor(PrevLocCasted, VN);
+	Value *MapValuePtrStart = IRB.CreateGEP(MapPtr, MapVarLocStart);
 
-	/* Load SHM pointer */
-	LoadInst *MapPtr = IRB.CreateLoad(AFLMapPtr); //load u8
-	debug(MapPtr);
 	MapPtr->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-	Value *MapValuePtrStart = IRB.CreateGEP(MapPtr, MapVarLocStart); //
-
-#ifdef __x86_64__
-	/* Low 16bit for Byte Location; High 3bit for bit location in the Byte.*/
-	ConstantInt * MaskLow16 = ConstantInt::get(LargestType, (1 << 16) - 1);
-	Value * pos1 = IRB.CreateAnd(PVN, MaskLow16);
-	///Value * sum= IRB.CreateAdd(pos1,MapVarLocStart);
-	Value * t1 = IRB.CreateLShr(PVN, ConstantInt::get(LargestType, 16));
-
-	Value * b1 = IRB.CreateAnd(t1, ConstantInt::get(LargestType, (1 << 3) - 1));
-	Value * bv1 = IRB.CreateShl(ConstantInt::get(LargestType, 1), b1);
-	Value * Ptr1 = IRB.CreateGEP(MapValuePtrStart, pos1); //
-	///Value * Ptr1 = IRB.CreateGEP(MapPtr, sum);
-
-	LoadInst *OriginByte = IRB.CreateLoad(Ptr1);
-	Value * byte1 = IRB.CreateOr(OriginByte, bv1);
-	StoreInst *myStore = IRB.CreateStore(byte1, Ptr1);
+	Value *MapValuePtr = IRB.CreateGEP(MapValuePtrStart, MapValueLoc);
+	debug(v);
+	//Value *casted = IRB.CreateTrunc(v, IRB.getInt8Ty());
+	Value * pre_v = IRB.CreateLoad(LargestType,MapValuePtr);
+	debug(pre_v);
+	Value * new_v = IRB.CreateXor(v, pre_v);
+    debug(new_v);
+	StoreInst *myStore = IRB.CreateStore(v, MapValuePtr);
+	debug(myStore);
 	myStore->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-
-	Value *PVN_ = IRB.CreateLShr(PVN, ConstantInt::get(LargestType, 19));
-	pos1 = IRB.CreateTrunc(PVN_, IRB.getInt16Ty());
-	t1 = IRB.CreateLShr(PVN_, ConstantInt::get(Int64Ty, 16));
-	b1 = IRB.CreateAnd(t1, ConstantInt::get(LargestType, (1 << 3) - 1));
-	bv1 = IRB.CreateShl(ConstantInt::get(Int8Ty, 1), b1);
-	Ptr1 = IRB.CreateGEP(MapValuePtrStart, pos1);
-
-	OriginByte = IRB.CreateLoad(Ptr1);
-	byte1 = IRB.CreateOr(OriginByte, bv1);
-	myStore = IRB.CreateStore(byte1, Ptr1);
-
-	Value * PVN__ = IRB.CreateLShr(PVN, ConstantInt::get(LargestType, 38));
-	pos1 = IRB.CreateTrunc(PVN__, IRB.getInt16Ty());
-	t1 = IRB.CreateLShr(PVN__, ConstantInt::get(Int64Ty, 16));
-	b1 = IRB.CreateAnd(t1, ConstantInt::get(LargestType, (1 << 3) - 1));
-	bv1 = IRB.CreateShl(ConstantInt::get(Int8Ty, 1), b1);
-	Ptr1 = IRB.CreateGEP(MapValuePtrStart, pos1);
-
-	OriginByte = IRB.CreateLoad(Ptr1);
-	byte1 = IRB.CreateOr(OriginByte, bv1);
-	myStore = IRB.CreateStore(byte1, Ptr1);
-
-#else
-	//ConstantInt * = ConstantInt::get(LargestType, (1<<20)-1);
-	Value * pos1=IRB.CreateTrunc(PVN, IRB.getInt16Ty());
-	Value * t1=IRB.CreateLShr(PVN, ConstantInt::get(LargestType,16));
-	Value * b1=IRB.CreateAnd(t1,ConstantInt::get(LargestType, (1<<3)-1));
-	Value * bv1=IRB.CreateShl(ConstantInt::get(Int8Ty,1),b1);
-	Value * Ptr1 = IRB.CreateGEP(MapValuePtrStart, pos1);
-
-	LoadInst *Origin = IRB.CreateLoad(Ptr1);
-	Value * byte1 = IRB.CreateOr(Origin, bv1);
-	StoreInst *myStore = IRB.CreateStore(byte1, Ptr1);
-
-	PVN_=IRB.CreateLShr(PVN, ConstantInt::get(LargestType,19));
-	pos1=IRB.CreateTrunc(PVN_, IRB.getInt16Ty());
-	t1=IRB.CreateLShr(PVN_, ConstantInt::get(Int64Ty,16));
-	b1=IRB.CreateAnd(t1,ConstantInt::get(LargestType, (1<<3)-1));
-	bv1=IRB.CreateShl(ConstantInt::get(Int8Ty,1),b1);
-	Ptr1 = IRB.CreateGEP(MapValuePtrStart, pos1);
-
-	LoadInst *Origin = IRB.CreateLoad(Ptr1);
-	byte1 = IRB.CreateOr(Origin, bv1);
-	myStore = IRB.CreateStore(byte1, Ptr1);
-	myStore->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-#endif
-
-	/*
-	 // Load SHM pointer
-
-	 LoadInst *MapPtr = IRB.CreateLoad(AFLMapPtr);
-	 MapPtr->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-	 Value *MapValuePtr = IRB.CreateGEP(MapPtr, MapValueLoc);
-	 //								errs()<<"#LoadInst# MapPtr:";
-	 //								MapPtr->print(errs());
-	 //								errs()<<"\n#getelementptr# MapValuePtr:";
-	 //								MapValuePtr->print(errs());
-	 //								errs()<<"\n";
-
-	 Value *casted = IRB.CreateTrunc(v, IRB.getInt8Ty());
-
-	 //								errs()<<"\n#CastTrunc#:";
-	 //								casted->print(errs());
-	 //								errs()<<"\n";
-	 StoreInst *myStore=IRB.CreateStore(casted, MapValuePtr);
-	 myStore->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-	 //								errs()<<"\n#Store#:";
-	 //								myStore->print(errs());
-	 //								errs()<<"\n";
-	 */
 
 }
 bool AFLCoverage::runOnModule(Module &M) {
@@ -347,9 +248,9 @@ bool AFLCoverage::runOnModule(Module &M) {
 		return false;
 	}
 
-	std::list<std::string> targets;
+	std::list < std::string > targets;
 	std::map<std::string, int> bb_to_dis;
-	std::vector<std::string> basic_blocks;
+	std::vector < std::string > basic_blocks;
 
 	if (!TargetsFile.empty()) {
 
@@ -492,7 +393,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 		std::string dotfiles(OutDirectory + "/dot-files");
 		if (stat(dotfiles.c_str(), &sb) != 0) {
 			const int dir_err = mkdir(dotfiles.c_str(),
-			S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+					S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
 			if (-1 == dir_err)
 				FATAL("Could not create directory %s.", dotfiles.c_str());
 		}
@@ -503,9 +404,9 @@ bool AFLCoverage::runOnModule(Module &M) {
 			std::string funcName = F.getName();
 
 			/* Black list of function names */
-			std::vector<std::string> blacklist = { "asan.", "llvm.", "sancov.",
-					"free"
-							"malloc", "calloc", "realloc" };
+			std::vector<std::string> blacklist = {"asan.", "llvm.", "sancov.",
+				"free"
+				"malloc", "calloc", "realloc"};
 			for (std::vector<std::string>::size_type i = 0;
 					i < blacklist.size(); i++)
 				if (!funcName.compare(0, blacklist[i].size(), blacklist[i]))
@@ -590,7 +491,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 							}
 						}
 
-						if (auto *c = dyn_cast<CallInst>(&I)) {
+						if (auto *c = dyn_cast < CallInst > (&I)) {
 
 							std::size_t found = filename.find_last_of("/\\");
 							if (found != std::string::npos)
@@ -622,7 +523,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 					if (!BB.hasName()) {
 						std::string newname = bb_name + ":";
 						Twine t(newname);
-						SmallString<256> NameData;
+						SmallString < 256 > NameData;
 						StringRef NameRef = t.toStringRef(NameData);
 						BB.setValueName(ValueName::Create(NameRef));
 					}
@@ -673,7 +574,8 @@ bool AFLCoverage::runOnModule(Module &M) {
 	} else {
 		/*add by yangke start*/
 		std::ofstream bbname_id_pairs;
-		OKF("#Dump <<BBname>,RandomId> pairs to :%s", (OutDirectory + "/bbname_rid_pairs.txt\n").c_str());
+		OKF("#Dump <<BBname>,RandomId> pairs to %s",
+				(OutDirectory + "/bbname_rid_pairs.txt\n").c_str());
 		bbname_id_pairs.open(OutDirectory + "/bbname_rid_pairs.txt",
 				std::ofstream::out | std::ofstream::app);
 
@@ -760,6 +662,24 @@ bool AFLCoverage::runOnModule(Module &M) {
 						}
 					}
 				}
+
+				//original aflgo instrumentation start
+				BasicBlock::iterator IP = BB.getFirstInsertionPt();
+				IRBuilder<> IRB(&(*IP));
+
+				if (AFL_R(100) >= inst_ratio)
+					continue;
+
+				/* Make up cur_loc */
+
+				unsigned int cur_loc = AFL_R(MAP_SIZE);
+
+				//original aflgo instrumentation break
+
+				/*add by yangke start*/
+				if (!OutDirectory.empty())
+					bbRecord(cur_loc, BB, bbname_id_pairs);
+				/*add by yangke end*/
 				/*add by yangke start*/
 #ifndef YANGKE
 				bool mapit = 1;
@@ -769,7 +689,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 					continue;
 				TerminatorInst *TI = BB.getTerminator();
 
-				if (BranchInst * BI = dyn_cast<BranchInst>(TI)) {
+				if (BranchInst * BI = dyn_cast < BranchInst > (TI)) {
 					if (BI->isConditional()) {
 						OKF("add by yangke.");
 						std::string alert_info;
@@ -780,7 +700,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 						alert_info = "";
 						v->print(rso);
 						OKF("#Depends on Value#:%s", alert_info.c_str());
-						if (ICmpInst * icmp = dyn_cast<ICmpInst>(v)) {
+						if (ICmpInst * icmp = dyn_cast < ICmpInst > (v)) {
 							alert_info = "";
 							v->print(rso);
 							OKF("#Branch Conditon comes from  ICmpInst#:%s",
@@ -799,28 +719,30 @@ bool AFLCoverage::runOnModule(Module &M) {
 //					op2->print(errs());
 //					errs()<<"\n";
 
-							ConstantInt * consop0 = dyn_cast<ConstantInt>(op0);
+							ConstantInt * consop0 = dyn_cast < ConstantInt
+									> (op0);
 							if (!consop0
 									&& op0->getType()->getTypeID()
 											!= Type::VoidTyID) {
 								mapValue(icmp, op0, AFLMapPtr, AFLPrevLoc, BB,
-										M);
+										M, cur_loc);
 								OKF(
 										"Instrument[%d] With Condition:ICmpInst OK!\n",
 										instrument_cnt++);
 							}
-							ConstantInt * consop1 = dyn_cast<ConstantInt>(op1);
+							ConstantInt * consop1 = dyn_cast < ConstantInt
+									> (op1);
 							if (!consop1
 									&& op1->getType()->getTypeID()
 											!= Type::VoidTyID) {
 								mapValue(icmp, op1, AFLMapPtr, AFLPrevLoc, BB,
-										M);
+										M, cur_loc);
 								OKF(
 										"Instrument[%d] With Condition:ICmpInst OK!\n",
 										instrument_cnt++);
 							}
-						} else if (BinaryOperator * BOP = dyn_cast<
-								BinaryOperator>(v)) {
+						} else if (BinaryOperator * BOP = dyn_cast
+								< BinaryOperator > (v)) {
 							alert_info = "";
 							BOP->print(rso);
 							OKF(
@@ -828,7 +750,8 @@ bool AFLCoverage::runOnModule(Module &M) {
 									alert_info.c_str());
 							Value * op0 = BOP->getOperand(0);
 
-							if (ICmpInst * icmp0 = dyn_cast<ICmpInst>(op0)) {
+							if (ICmpInst * icmp0 = dyn_cast < ICmpInst
+									> (op0)) {
 								alert_info = "";
 								icmp0->print(rso);
 								OKF(
@@ -836,8 +759,8 @@ bool AFLCoverage::runOnModule(Module &M) {
 										alert_info.c_str());
 								Value * op00 = icmp0->getOperand(0);
 
-								if (ConstantInt * cnst = dyn_cast<ConstantInt>(
-										op00)) {
+								if (ConstantInt * cnst = dyn_cast < ConstantInt
+										> (op00)) {
 								} else if (op00->getType()->getTypeID()
 										!= Type::VoidTyID) {
 									alert_info = "";
@@ -848,7 +771,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 									//OKF("--#ICmpInst0 op00 TypeID#:%d",id00);
 									/* begin instrumentation */
 									mapValue(icmp0, op00, AFLMapPtr, AFLPrevLoc,
-											BB, M);
+											BB, M, cur_loc);
 									OKF(
 											"--Instrument[%d] With Condition:BinaryOperator OK!\n",
 											instrument_cnt++);
@@ -856,8 +779,8 @@ bool AFLCoverage::runOnModule(Module &M) {
 
 								}
 								Value * op01 = icmp0->getOperand(1);
-								if (ConstantInt * cnst = dyn_cast<ConstantInt>(
-										op01)) {
+								if (ConstantInt * cnst = dyn_cast < ConstantInt
+										> (op01)) {
 								} else if (op01->getType()->getTypeID()
 										!= Type::VoidTyID) {
 									alert_info = "";
@@ -868,7 +791,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 									//OKF("--#ICmpInst0 op01 TypeID#:%d",id01);
 									/* begin instrumentation */
 									mapValue(icmp0, op01, AFLMapPtr, AFLPrevLoc,
-											BB, M);
+											BB, M, cur_loc);
 									OKF(
 											"--Instrument[%d] With Condition:BinaryOperator OK!\n",
 											instrument_cnt++);
@@ -878,7 +801,8 @@ bool AFLCoverage::runOnModule(Module &M) {
 							}
 							Value * op1 = BOP->getOperand(1);
 
-							if (ICmpInst * icmp1 = dyn_cast<ICmpInst>(op1)) {
+							if (ICmpInst * icmp1 = dyn_cast < ICmpInst
+									> (op1)) {
 								alert_info = "";
 								icmp1->print(rso);
 								OKF(
@@ -886,8 +810,8 @@ bool AFLCoverage::runOnModule(Module &M) {
 										alert_info.c_str());
 								Value * op10 = icmp1->getOperand(0);
 
-								if (ConstantInt * cnst = dyn_cast<ConstantInt>(
-										op10)) {
+								if (ConstantInt * cnst = dyn_cast < ConstantInt
+										> (op10)) {
 								} else if (op10->getType()->getTypeID()
 										!= Type::VoidTyID) {
 									alert_info = "";
@@ -898,7 +822,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 									//OKF("--#ICmpInst1 op10 TypeID#:%d",id10);
 									/* begin instrumentation */
 									mapValue(icmp1, op10, AFLMapPtr, AFLPrevLoc,
-											BB, M);
+											BB, M, cur_loc);
 									OKF(
 											"--Instrument[%d] With Condition:BinaryOperator OK!\n",
 											instrument_cnt++);
@@ -906,8 +830,8 @@ bool AFLCoverage::runOnModule(Module &M) {
 
 								}
 								Value * op11 = icmp1->getOperand(1);
-								if (ConstantInt * cnst = dyn_cast<ConstantInt>(
-										op11)) {
+								if (ConstantInt * cnst = dyn_cast < ConstantInt
+										> (op11)) {
 								} else if (op11->getType()->getTypeID()
 										!= Type::VoidTyID) {
 									alert_info = "";
@@ -918,7 +842,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 									//OKF("--#ICmpInst1 op11 TypeID#:%d",id11);
 									/* begin instrumentation */
 									mapValue(icmp1, op11, AFLMapPtr, AFLPrevLoc,
-											BB, M);
+											BB, M, cur_loc);
 									OKF(
 											"--Instrument[%d] With Condition:BinaryOperator OK!\n",
 											instrument_cnt++);
@@ -941,20 +865,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 				}
 #endif
 				/*add by yangke end*/
-
-				BasicBlock::iterator IP = BB.getFirstInsertionPt();
-				IRBuilder<> IRB(&(*IP));
-
-				if (AFL_R(100) >= inst_ratio)
-					continue;
-
-				/* Make up cur_loc */
-
-				unsigned int cur_loc = AFL_R(MAP_SIZE);
-				/*add by yangke start*/
-				bbRecord(cur_loc, BB, bbname_id_pairs);
-				/*add by yangke end*/
-
+				//original aflgo instrumentation resume
 				ConstantInt *CurLoc = ConstantInt::get(Int32Ty, cur_loc);
 
 				/* Load prev_loc */
@@ -997,16 +908,19 @@ bool AFLCoverage::runOnModule(Module &M) {
 #ifdef __x86_64__
 					IntegerType *LargestType = Int64Ty;
 					ConstantInt *MapDistLoc = ConstantInt::get(LargestType,
-					MAP_SIZE);
+							MAP_SIZE);
 					ConstantInt *MapCntLoc = ConstantInt::get(LargestType,
-					MAP_SIZE + 8);
+							MAP_SIZE + 8);
 					ConstantInt *Distance = ConstantInt::get(LargestType,
 							udistance);
 #else
 					IntegerType *LargestType = Int32Ty;
-					ConstantInt *MapDistLoc = ConstantInt::get(LargestType, MAP_SIZE);
-					ConstantInt *MapCntLoc = ConstantInt::get(LargestType, MAP_SIZE + 4);
-					ConstantInt *Distance = ConstantInt::get(LargestType, udistance);
+					ConstantInt *MapDistLoc = ConstantInt::get(LargestType,
+							MAP_SIZE);
+					ConstantInt *MapCntLoc = ConstantInt::get(LargestType,
+							MAP_SIZE + 4);
+					ConstantInt *Distance = ConstantInt::get(LargestType,
+							udistance);
 #endif
 
 					/* Add distance to shm[MAPSIZE] */
