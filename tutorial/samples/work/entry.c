@@ -30,7 +30,7 @@ int main(int argc, char** argv)
   if (local[7] == 'B' && local[8] == 'a') {
       addOne(&j);
   }
-  if (local[9] == 'i' && local[3] == '8') {
+  if (local[9] == 'i'){ //&& local[3] == '8') {
       addTwo(&j);
   }/*
   if (local[4] == '6' ) {

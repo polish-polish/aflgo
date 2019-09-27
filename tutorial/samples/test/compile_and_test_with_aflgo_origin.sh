@@ -1,9 +1,10 @@
 #!/bin/bash
-export AFLGO=/home/yangke/Program/AFL/aflgo/aflgo
-export TMP_DIR=/home/yangke/Program/AFL/aflgo/aflgo/tutorial/samples/work/temp
+AFLGO=/home/yangke/Program/AFL/aflgo/bak/aflgo-origin
+AFLGO_GOOD=/home/yangke/Program/AFL/aflgo/bak/aflgo-good
+export TMP_DIR=$AFLGO_GOOD/tutorial/samples/test/temp
 export ADDITIONAL="-targets=$TMP_DIR/BBtargets.txt -outdir=$TMP_DIR -flto -fuse-ld=gold -Wl,-plugin-opt=save-temps"
 export LDFLAGS=-lpthread
-export SUBJECT=/home/yangke/Program/AFL/aflgo/aflgo/tutorial/samples/work
+export SUBJECT=$AFLGO_GOOD/tutorial/samples/test
 if [ "$1" != "-" ] ; then
 if [ ! -f ./entry.c ]; then
     exit 1
@@ -29,6 +30,7 @@ $CC $ADDITIONAL $LDFLAGS  ./entry.c -o entry_profiled
 cat $TMP_DIR/BBnames.txt | rev | cut -d: -f2- | rev | sort | uniq > $TMP_DIR/BBnames2.txt && mv $TMP_DIR/BBnames2.txt $TMP_DIR/BBnames.txt
 cat $TMP_DIR/BBcalls.txt | sort | uniq > $TMP_DIR/BBcalls2.txt && mv $TMP_DIR/BBcalls2.txt $TMP_DIR/BBcalls.txt
 
+
 # Generate distance ☕️
 $AFLGO/scripts/genDistance.sh $SUBJECT $TMP_DIR entry
 
@@ -52,9 +54,8 @@ if [ ! -d ./in ] ;then
 else
     rm ./in/*
 fi
-cp abc in
+echo whoamiwhoamiwhoami > ./in/words
 rm -rf ./out
 fi
 #gdb --args $AFLGO/afl-fuzz -S entry_result -z exp -c 2m -i in -o out $SUBJECT/entry_profiled @@
-/usr/bin/time -a -o time.txt $AFLGO/afl-fuzz -S entry_result -z exp -c 1m -i in -o out -E $TMP_DIR $SUBJECT/entry_profiled @@
-
+/usr/bin/time -a -o time.txt $AFLGO/afl-fuzz -S entry_result -z exp -c 1m -i in -o out  $SUBJECT/entry_profiled @@

@@ -25,9 +25,7 @@
 
 #define _GNU_SOURCE
 #define _FILE_OFFSET_BITS 64
-/* add by yangke start*/
-#define THRESHOLD_CYCLES_WO_FINDS 2
-/* add by yangke end */
+
 
 #include "config.h"
 #include "types.h"
@@ -318,6 +316,22 @@ static s32 interesting_32[] = { INTERESTING_8, INTERESTING_16, INTERESTING_32 };
 static u8 margin_bb_query_by_rid[1<<16]; //TODO :replace 1<<16 with MAX_VERTEX_NUM
 static int margin_bb_rid[1<<16];
 static int margin_bb_count=0;
+
+/* remember interesting mutaion operation and the operateed positions */
+
+
+
+#define MAX_MUT_POS (1<<12) //100KB
+#define MUT_NUM 10
+static int mut[MUT_NUM][MAX_MUT_POS];//e.g. mut[0][2] mut times of BIT_FLIP(opcode is 0,see afl-fuzz.c:6566) at byte with offset 2 of the input
+static int mut_cnt[MUT_NUM];//mutation times of a each kind of mution
+static unsigned total_mut_cnt=0;//total mutation opteration times
+static unsigned total_monitored_mut_cnt=0;//we only monitored some of the mutaions,
+//so this means times that we current used for mutation proiritization
+#define THRESHOLD_CYCLES_WO_FINDS 2 //threshold for opening mutation proir mode.
+static int mut_prior_mode=0;//flags that indicat we are in mutation prior mode
+//TODO: add more mutator argument info other than position ...
+
 /* add by yangke end */
 
 /* Fuzzing stages */
@@ -989,11 +1003,11 @@ static inline u8 has_new_bits(u8* virgin_map) {
             (cur[6] && vir[6] == 0xff) || (cur[7] && vir[7] == 0xff)) ret = 2;
         else ret = 1;
         /* add by yangke start */
-
-        printf("interesting!!!! ret=%d\n",ret);
-        printf("vir:%x %x %x %x %x %x %x %x\n",vir[0],vir[1],vir[2],vir[3],vir[4],vir[5],vir[6],vir[7]);
-        printf("cur:%x %x %x %x %x %x %x %x\n",cur[0],cur[1],cur[2],cur[3],cur[4],cur[5],cur[6],cur[7]);
-
+        //if (ret==2){
+        //	OKF("interesting!!!! ret=%d\n",ret);
+		//	OKF("vir:%x %x %x %x %x %x %x %x\n",vir[0],vir[1],vir[2],vir[3],vir[4],vir[5],vir[6],vir[7]);
+		//	OKF("cur:%x %x %x %x %x %x %x %x\n",cur[0],cur[1],cur[2],cur[3],cur[4],cur[5],cur[6],cur[7]);
+        //}
         /* add by yangke end */
 
 #else
@@ -1034,11 +1048,11 @@ static inline u8 has_new_bits(u8* virgin_map) {
 	u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
 	for(int i=0;i<margin_bb_count;i++){
 		int rid=margin_bb_rid[i];
-		if(cur[rid] ^ vir[rid]){
+		if(cur[rid] != vir[rid]){
 			OKF("margin_bb_count=%d",margin_bb_count);
-			for(int j=0;j<margin_bb_count;j++){
-				OKF("%d:rid=%d,cur[rid]=%llx,vir[rid]=%llx",j,rid,cur[margin_bb_rid[j]] , vir[margin_bb_rid[j]]);
-			}
+			//for(int j=0;j<margin_bb_count;j++){
+			//	OKF("%d:rid=%d,cur[rid]=%llx,vir[rid]=%llx",j,rid,cur[margin_bb_rid[j]] , vir[margin_bb_rid[j]]);
+			//}
 			ret=1;
 		}
 		vir[rid]=cur[rid];
@@ -3268,9 +3282,9 @@ static void write_crash_readme(void) {
 /* Load all static CFG as one */
 //TODO: change it as a structure
 #define MAX_VERTEX_NUM MAP_SIZE
-#define MAX_EDGE_NUM (MAP_SIZE<<3)
+#define MAX_EDGE_NUM (MAP_SIZE<<1)//The max degree of a vertex is 2
 int out_edge_index[MAX_EDGE_NUM][2];
-int in_edge_index[MAX_EDGE_NUM][2];
+//int in_edge_index[MAX_EDGE_NUM][2];
 static int vertex_index[MAX_VERTEX_NUM];
 
 u8 bb_cov_map_by_rid[MAX_VERTEX_NUM];//cov:1,uncov:0
@@ -3281,20 +3295,21 @@ static int edge_num=0;
 static int cfg_loaded=0;
 static void loadCFG() {
 
-	u8 *fn = alloc_printf("%s/%s",cfg_directory, "/node_index.txt");
-	OKF("node_index=%s",fn);
+	u8 *fn = alloc_printf("%s/%s",cfg_directory, "node_index.txt");
+	//OKF("Vertex_Index file:%s",fn);
 	FILE * f;
 	if (!(f = fopen(fn, "r"))) {
 		ck_free(fn);
+		FATAL("No such file or directory: %s",fn);
 	}
 	vertex_num=0;
     u8 tmp[MAX_LINE];
 	while (fgets(tmp, MAX_LINE, f)) {
 		if(vertex_num>=MAX_VERTEX_NUM){
-			FATAL("Error occured when loading CFG, vertex overflow!!");
+			FATAL("Error occured when loading CFG, vertexes overflow!!");
 		}
 		int rid=atoi(tmp);
-		OKF("rid:%d",rid);
+		//OKF("rid:%d",rid);
 		vertex_index[vertex_num]=rid;
 		bb_cov_map_by_rid[rid]=0;//mix coverage init process.TODO: decouple
 		vertex_num++;
@@ -3305,8 +3320,8 @@ static void loadCFG() {
 	fclose(f);
 
 
-	fn = alloc_printf("%s/%s",cfg_directory, "/out_edge_index.txt");
-	OKF("Load out_edge_index from file %s",fn);
+	fn = alloc_printf("%s/%s",cfg_directory, "out_edge_index.txt");
+	//OKF("Out Edge Index file:%s",fn);
 	if (!(f = fopen(fn, "r"))) {
 		ck_free(fn);
 	}
@@ -3322,14 +3337,15 @@ static void loadCFG() {
 		out_edge_index[edge_num][0]=atoi(first);
 		out_edge_index[edge_num][1]=atoi(second);
 		out_edge_cov_index[edge_num]=0;//mix coverage init process.TODO: decouple
-		OKF("edge_out:%d,%d",out_edge_index[edge_num][0],out_edge_index[edge_num][1]);
+		//OKF("edge_out:%d,%d",out_edge_index[edge_num][0],out_edge_index[edge_num][1]);
 		edge_num++;
 	}
 	out_edge_index[edge_num][0]=-1;out_edge_index[edge_num][1]=-1;//elements ends with value -1
-	OKF("Total: %d out_edges.",edge_num);
+	//OKF("Total: %d out_edges.",edge_num);
 	ck_free(fn);
 	fclose(f);
-
+    /* in_edge_index is not useful currently but we keep it for sake of future cite */
+	/*
 	fn = alloc_printf("%s/%s",cfg_directory, "/in_edge_index.txt");
 	OKF("Load in_edge_index from file %s",fn);
 	if (!(f = fopen(fn, "r"))) {
@@ -3353,6 +3369,7 @@ static void loadCFG() {
 	OKF("Total: %d in_edges.",edge_num);
 	ck_free(fn);
 	fclose(f);
+	*/
 	cfg_loaded=1;
 	//FATAL("KILL BY YANGKE loadCFG.");
 }
@@ -3372,6 +3389,7 @@ static void update_margin_bbs()
 		int end=out_edge_index[i][1];
 		if (virgin_bits[(start>>1)^end]==0xff)
 		{
+			/* only mark the edge as covered because we don't know whether vertexes are covered.*/
 			out_edge_cov_index[i]=0;
 		}
 		else{
@@ -3388,6 +3406,7 @@ static void update_margin_bbs()
 		margin_bb_rid[i]=-1;
 	}
 	margin_bb_count=0;
+
 	/*3. find and record margin basic blocks.*/
 	for(int i=0;i<edge_num && out_edge_index[i][0]!=-1;i++)
 	{
@@ -3404,6 +3423,49 @@ static void update_margin_bbs()
 	//FATAL("KILL BY YANGKE update_margin_bbs.");
 }
 /* add by yangke end */
+
+static inline void print_mutation_table()
+{
+	OKF("#####INTERESTING MUTATION TABLE#####");
+	for(int i=0;i<MUT_NUM;i++)
+	{
+	  for(int j=0;j<MAX_MUT_POS;j++)
+	  {
+		  if(mut[i][j]>0){
+			  switch (i){
+			  case 0:
+				  OKF("Flip bit:\t\t\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
+				  break;
+			  case 1:
+				  OKF("Set byte interesting:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
+				  break;
+			  case 2:
+				  OKF("Set word interesting:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
+				  break;
+			  case 3:
+				  OKF("Set dword interesting:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
+				  break;
+			  case 4:
+				  OKF("Randomly subtract from byte:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
+				  break;
+			  case 5:
+				  OKF("Randomly add to byte:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
+				  break;
+			  case 6:
+				  OKF("Randomly subtract from word, random endian:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
+				  break;
+			  case 7:
+				  OKF("Randomly add to word, random endian:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
+				  break;
+			  default:
+				  FATAL("UNKNOWN MUTATION CODE:%d",i);
+			  }
+		  }
+	  }
+
+	}
+}
+
 /* Check if the result of an execve() during routine fuzzing is interesting,
    save or queue the input test case for further analysis if so. Returns 1 if
    entry is saved, 0 otherwise. */
@@ -3422,14 +3484,17 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
     if (!(hnb = has_new_bits(virgin_bits))) {
       if (crash_mode) total_crashes++;
-      //return 0;//add by yangke
+      //return 0;//original AFLGO
       /* add by yangke start */
 	  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
 	      if (!cfg_loaded)
 	    	  loadCFG();
 	      update_margin_bbs();
 		  if(has_new_var_bits(virgin_var_bits)){
-			  FATAL("branch variable value changed in this mutation! We find an optimize point!");
+			  print_mutation_table();
+			  OKF("branch variable value changed in this mutation! We find an optimize point!");
+			  mut_prior_mode=1;
+			  //FATAL("branch variable value changed in this mutation! We find an optimize point!");
 			  //TODO: analyze valid input bytes and promising mutation opeartions
 		  }
 		  else{
@@ -3573,7 +3638,11 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
 #endif /* ^!SIMPLE_FILES */
 
-      unique_crashes++; exit(0);//add by yangke
+      unique_crashes++;
+      /* add by yangke start */
+      OKF("First Crash is Achieved! Exit now!");
+      exit(0);
+      /* add by yangke end */
 
       last_crash_time = get_cur_time();
       last_crash_execs = total_execs;
@@ -5280,6 +5349,72 @@ static u8 could_be_interest(u32 old_val, u32 new_val, u8 blen, u8 check_le) {
 
 }
 
+/* add by yangke start */
+static void cleanup_mutation_record()
+{
+	total_mut_cnt=0;
+	total_monitored_mut_cnt=0;
+	for(int i=0;i<MUT_NUM;i++)
+	{
+		mut_cnt[i]=0;
+		for(int j=0;j<MAX_MUT_POS;j++)
+		{
+			mut[i][j]=0;
+		}
+	}
+}
+
+static inline void record_mutation(int index, int pos)
+{
+	if(index >= MUT_NUM){
+		WARNF("mut[index=%d][pos=%d]+=1; //afl-fuzz.c:5370",index,pos);
+		FATAL("HEY! YANGKE! Mutation index(=%d) out of bound(MUT_NUM=%d)!",index,MUT_NUM);
+	}else if(pos >= MAX_MUT_POS){
+		WARNF("mut[index=%d][pos=%d]+=1; //afl-fuzz.c:5373",index,pos);
+		FATAL("HEY! YANGKE! Mutation pos(=%d) out of bound(MAX_MUT_POS=%d)!",pos,MAX_MUT_POS);
+	}else{
+		mut[index][pos]+=1;
+	    mut_cnt[index]++;
+		total_monitored_mut_cnt++;
+	}
+}
+#define SELECT_RATIO 75 //75%
+static inline void dispatch_random(u32 range,u32 * arg)
+{
+	u32 valid_mut[MUT_NUM];
+	u32 valid_mut_cnt=0;
+	for(int i=0;i<MUT_NUM;i++)
+	{
+		if (mut_cnt[i]>0)
+		{
+			valid_mut[valid_mut_cnt++]=i;
+		}
+	}
+
+	if (UR(100)>SELECT_RATIO){
+		arg[0]=UR(range);
+		arg[1]=-1;
+	}else{
+		arg[0]=valid_mut[UR(valid_mut_cnt)];
+		int valid_pos[MAX_MUT_POS];
+		int valid_pos_cnt=0;
+		for(int i=0;i<MAX_MUT_POS;i++){
+			if (mut[arg[0]][i]>0){
+				valid_pos[valid_pos_cnt++]=i;
+			}
+		}
+		arg[1]=valid_pos[UR(valid_pos_cnt)];
+		switch (arg[0]){
+		case 0:
+			arg[1]=(arg[1]<<3)+UR(8);
+			break;
+		default:
+			;
+		}
+	}
+
+}
+/* add by yangke end */
 
 /* Take the current entry from the queue, fuzz it for a while. This
    function is a tad too long... returns 0 if fuzzed successfully, 1 if
@@ -6432,29 +6567,88 @@ havoc_stage:
 
   /* We essentially just do several thousand runs (depending on perf_score)
      where we take the input file and make random stacked tweaks. */
+  /* add by yangke start */
 
-  for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
+  int my_stage_max=stage_max;
 
+  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
+	  if(!mut_prior_mode){
+		  my_stage_max=stage_max>4?4:stage_max;
+		  cleanup_mutation_record();
+	  }else{
+		  OKF("Now our mutations are in mut_prior_mode.");
+	  }
+  }else{
+	  mut_prior_mode=0;
+	  cleanup_mutation_record();
+  }
+
+  /* add by yangke end */
+  for (stage_cur = 0; stage_cur < my_stage_max; stage_cur++) {
+
+	//UR is a inline random number generation function, see afl-fuzz.c:406
     u32 use_stacking = 1 << (1 + UR(HAVOC_STACK_POW2));
 
     stage_cur_val = use_stacking;
  
-    for (i = 0; i < use_stacking; i++) {
+    /* add by yangke start */
+    int my_use_stacking=use_stacking;
+    if(cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
+    	if(!mut_prior_mode){
+    		my_use_stacking=use_stacking>4?4:use_stacking;
+    	}
+    }
+    /* add by yangke end */
 
-      switch (UR(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0))) {
+    for (i = 0; i < my_use_stacking; i++) {
 
-        case 0:
+      /* add by yangke start */
+      u32 arg[2];//to store opcode and pos
+      if(mut_prior_mode){
+    	 dispatch_random(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0),arg);
+      }else{
+    	 arg[0]=UR(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0));//original AFLGO setting
+    	 arg[1]=-1;// be careful when it is used as the initial value is invalid pos -1
+      }
+      /* add by yangke end */
+
+
+      switch (arg[0]) {
+
+      case 0:
 
           /* Flip a single bit somewhere. Spooky! */
+    	  /* add by yangke start */
+    	  if (!mut_prior_mode||arg[1]==-1){
+    		  arg[1]=UR(temp_len << 3);
+    	  }//else{arg[1]= (arg[1]>>3)+UR(8));}
+    	  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
+    	      record_mutation(0,arg[1]>>3);
+    	  }
 
-          FLIP_BIT(out_buf, UR(temp_len << 3));
+    	  FLIP_BIT(out_buf,arg[1]);
+
+
+          /* add by yangke end */
+
           break;
 
         case 1: 
 
           /* Set byte to interesting value. */
 
-          out_buf[UR(temp_len)] = interesting_8[UR(sizeof(interesting_8))];
+          /* add by yangke start */
+          if (!mut_prior_mode||arg[1]==-1){
+        	  arg[1]=UR(temp_len);
+		  }
+          if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
+              record_mutation(1,arg[1]);
+          }
+
+          out_buf[arg[1]] = interesting_8[UR(sizeof(interesting_8))];
+
+          /* add by yangke end */
+
           break;
 
         case 2:
@@ -6463,17 +6657,30 @@ havoc_stage:
 
           if (temp_len < 2) break;
 
+          /* add by yangke start */
+
+          if (!mut_prior_mode||arg[1]==-1){
+        	  arg[1]=UR(temp_len - 1);
+          }
+          if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
+              record_mutation(2,UR(temp_len - 1));
+          }
+
+
           if (UR(2)) {
 
-            *(u16*)(out_buf + UR(temp_len - 1)) =
+            *(u16*)(out_buf + arg[1]) =
               interesting_16[UR(sizeof(interesting_16) >> 1)];
 
           } else {
 
-            *(u16*)(out_buf + UR(temp_len - 1)) = SWAP16(
+            *(u16*)(out_buf + arg[1]) = SWAP16(
               interesting_16[UR(sizeof(interesting_16) >> 1)]);
 
           }
+          /* add by yangke end */
+
+
 
           break;
 
@@ -6483,17 +6690,26 @@ havoc_stage:
 
           if (temp_len < 4) break;
 
+          /* add by yangke start */
+          if (!mut_prior_mode||arg[1]==-1){
+              arg[1]=UR(temp_len - 3);
+          }
+          if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
+        	  record_mutation(3,arg[1]);
+          }
+
           if (UR(2)) {
   
-            *(u32*)(out_buf + UR(temp_len - 3)) =
+            *(u32*)(out_buf + arg[1]) =
               interesting_32[UR(sizeof(interesting_32) >> 2)];
 
           } else {
 
-            *(u32*)(out_buf + UR(temp_len - 3)) = SWAP32(
+            *(u32*)(out_buf + arg[1]) = SWAP32(
               interesting_32[UR(sizeof(interesting_32) >> 2)]);
 
           }
+          /* add by yangke end */
 
           break;
 
@@ -6501,14 +6717,31 @@ havoc_stage:
 
           /* Randomly subtract from byte. */
 
-          out_buf[UR(temp_len)] -= 1 + UR(ARITH_MAX);
+          /* add by yangke start */
+          if (!mut_prior_mode||arg[1]==-1){
+			  arg[1]=UR(temp_len);
+		  }
+		  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
+			  record_mutation(4,arg[1]);
+		  }
+
+          out_buf[arg[1]] -= 1 + UR(ARITH_MAX);
+          /* add by yangke end */
           break;
 
         case 5:
 
           /* Randomly add to byte. */
 
-          out_buf[UR(temp_len)] += 1 + UR(ARITH_MAX);
+          /* add by yangke start */
+          if (!mut_prior_mode||arg[1]==-1){
+			  arg[1]=UR(temp_len);
+		  }
+		  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
+			  record_mutation(5,arg[1]);
+		  }
+          out_buf[arg[1]] += 1 + UR(ARITH_MAX);
+          /* add by yangke end */
           break;
 
         case 6:
@@ -6516,22 +6749,30 @@ havoc_stage:
           /* Randomly subtract from word, random endian. */
 
           if (temp_len < 2) break;
+          /* add by yangke start */
+          if (!mut_prior_mode||arg[1]==-1){
+			  arg[1]=UR(temp_len-1);
+		  }
+		  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
+			  record_mutation(6,arg[1]);
+		  }
 
           if (UR(2)) {
 
-            u32 pos = UR(temp_len - 1);
+            u32 pos = arg[1];
 
             *(u16*)(out_buf + pos) -= 1 + UR(ARITH_MAX);
 
           } else {
 
-            u32 pos = UR(temp_len - 1);
+            u32 pos = arg[1];
             u16 num = 1 + UR(ARITH_MAX);
 
             *(u16*)(out_buf + pos) =
               SWAP16(SWAP16(*(u16*)(out_buf + pos)) - num);
 
           }
+          /* add by yangke end */
 
           break;
 
@@ -6541,21 +6782,29 @@ havoc_stage:
 
           if (temp_len < 2) break;
 
+          /* add by yangke start */
+          if (!mut_prior_mode||arg[1]==-1){
+			  arg[1]=UR(temp_len-1);
+		  }
+		  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
+			  record_mutation(7,arg[1]);
+		  }
           if (UR(2)) {
 
-            u32 pos = UR(temp_len - 1);
+            u32 pos = arg[1];
 
             *(u16*)(out_buf + pos) += 1 + UR(ARITH_MAX);
 
           } else {
 
-            u32 pos = UR(temp_len - 1);
+            u32 pos = arg[1];
             u16 num = 1 + UR(ARITH_MAX);
 
             *(u16*)(out_buf + pos) =
               SWAP16(SWAP16(*(u16*)(out_buf + pos)) + num);
 
           }
+          /* add by yangke end */
 
           break;
 
@@ -6810,7 +7059,7 @@ havoc_stage:
           }
 
       }
-
+      total_mut_cnt++;
     }
 
     if (common_fuzz_stuff(argv, out_buf, temp_len))

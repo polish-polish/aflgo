@@ -170,20 +170,20 @@ void AFLCoverage::debug(Value *v) { //contains format string vulnerability
 	v->print(rso);
 	OKF("#Value#--:%s", var_str.c_str());
 }
-size_t AFLCoverage::hashName(Value *v) {
-	std::string var_str;
-	llvm::raw_string_ostream rso(var_str);
-	v->print(rso);
-	OKF("#Now we hash var#:%s", var_str.c_str());
-	int pos = var_str.find("=", 0);
-	std::hash < std::string > str_hash;
-	std::string name_str = var_str;
-	if (pos != -1) {
-		name_str = var_str.substr(0, pos);
-	}
-	return (size_t)(str_hash(name_str));
-
-}
+//size_t AFLCoverage::hashName(Value *v) {
+//	std::string var_str;
+//	llvm::raw_string_ostream rso(var_str);
+//	v->print(rso);
+//	OKF("#Now we hash var#:%s", var_str.c_str());
+//	int pos = var_str.find("=", 0);
+//	std::hash < std::string > str_hash;
+//	std::string name_str = var_str;
+//	if (pos != -1) {
+//		name_str = var_str.substr(0, pos);
+//	}
+//	return (size_t)(str_hash(name_str));
+//
+//}
 void AFLCoverage::mapValue(ICmpInst *icmp, Value *v, GlobalVariable *AFLMapPtr,
 		GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
 		unsigned int cur_loc) {
