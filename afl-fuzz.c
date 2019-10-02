@@ -5374,7 +5374,7 @@ static inline void record_mutation(int index, int pos)
 		FATAL("HEY! YANGKE! Mutation pos(=%d) out of bound(MAX_MUT_POS=%d)!",pos,MAX_MUT_POS);
 	}else{
 		mut[index][pos]+=1;
-	    mut_cnt[index]++;
+		mut_cnt[index]++;
 		total_monitored_mut_cnt++;
 	}
 }

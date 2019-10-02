@@ -36,8 +36,16 @@ def merge_all_cfg(file_dir):
     print nx.info(GG)
     return GG
 def getNameFromLabel(node):
-    array=node["label"].split(":")
-    return array[0][2:]+":"+array[1]
+    #print node
+    #e.g. 
+    #{'shape': 'record', 'cov': 0, 'label': '"{entry.c:34:}"'}
+    #{'shape': 'record', 'cov': 0, 'label': '"{entry.c:26:|{<s0>T|<s1>F}}"'}
+    #{'shape': 'record', 'cov': 0, 'label': '"{%23}"'}
+    if ":" in node["label"]:
+       array=node["label"].split(":")
+       return array[0][2:]+":"+array[1]
+    else:
+       return node["label"][2:][:-2]
 # Main function
 if __name__ == '__main__':
   is_cg = 1
