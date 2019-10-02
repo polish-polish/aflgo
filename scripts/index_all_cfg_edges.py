@@ -32,7 +32,7 @@ def merge_all_cfg(file_dir):
                 print "\nParsing %s .." % file 
                 G = nx.DiGraph(nx.drawing.nx_pydot.read_dot (file_dir+"/"+file))
                 print nx.info (G)
-                GG=nx.disjoint_union(GG,G) 
+                GG=nx.union(GG,G)
     print nx.info(GG)
     return GG
 def getNameFromLabel(node):
