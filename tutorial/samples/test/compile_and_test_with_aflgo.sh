@@ -1,10 +1,9 @@
-#!/bin/bash
-AFLGO=/home/yangke/Program/AFL/aflgo/bak/aflgo-origin
-AFLGO_GOOD=/home/yangke/Program/AFL/aflgo/bak/aflgo-good
-export TMP_DIR=$AFLGO_GOOD/tutorial/samples/test/temp
-export ADDITIONAL="-targets=$TMP_DIR/BBtargets.txt -outdir=$TMP_DIR -flto -fuse-ld=gold -Wl,-plugin-opt=save-temps"
-export LDFLAGS=-lpthread
-export SUBJECT=$AFLGO_GOOD/tutorial/samples/test
+#!/bin/bash 
+AFLGO=/home/yangke/Program/AFL/aflgo/bak/aflgo-good
+TMP_DIR=$AFLGO/tutorial/samples/test/temp
+ADDITIONAL="-targets=$TMP_DIR/BBtargets.txt -outdir=$TMP_DIR -flto -fuse-ld=gold -Wl,-plugin-opt=save-temps"
+LDFLAGS=-lpthread
+SUBJECT=$AFLGO/tutorial/samples/test
 if [ ! -n "$1" ] ;then
 	echo "Please provide the program name as the first argument. e.g 'entry' for entry.c in samples directory."
 fi
@@ -13,7 +12,7 @@ if [ "$2" != "-" ] ; then
 	if [ ! -f ./${TARGET}.c ]; then
 	    exit 1
 	fi
-        #rm -rf ./temp *.bc *.resolution.txt *.o
+        rm -rf ./temp *.bc *.resolution.txt *.o
 	mkdir ./temp
 	if [ "$TARGET" == "entry" ] ; then
 		echo "entry.c:45"> ./temp/BBtargets.txt
@@ -22,6 +21,7 @@ if [ "$2" != "-" ] ; then
 	elif [ "$TARGET" == "maze" ] ; then
 		echo "maze.c:104"> ./temp/BBtargets.txt
 	fi
+
 	pushd $AFLGO
 	#make clean all
 	make
@@ -37,11 +37,11 @@ if [ "$2" != "-" ] ; then
 	# Clean up
 	cat $TMP_DIR/BBnames.txt | rev | cut -d: -f2- | rev | sort | uniq > $TMP_DIR/BBnames2.txt && mv $TMP_DIR/BBnames2.txt $TMP_DIR/BBnames.txt
 	cat $TMP_DIR/BBcalls.txt | sort | uniq > $TMP_DIR/BBcalls2.txt && mv $TMP_DIR/BBcalls2.txt $TMP_DIR/BBcalls.txt
-
-
-	# Generate distance 
+        
+	
+	# Generate distance
 	$AFLGO/scripts/genDistance.sh $SUBJECT $TMP_DIR ${TARGET}
-
+        
 	echo "Distance values:"
 	head -n5 $TMP_DIR/distance.cfg.txt
 	echo "..."
@@ -50,13 +50,12 @@ if [ "$2" != "-" ] ; then
 
 	CFLAGS="-distance=$TMP_DIR/distance.cfg.txt -outdir=$TMP_DIR"
 	CXXFLAGS="-distance=$TMP_DIR/distance.cfg.txt -outdir=$TMP_DIR"
-
+        
 	$CC $CFLAGS  ./${TARGET}.c -o ${TARGET}_profiled
-
+        
 	$AFLGO/scripts/index_all_cfg_edges.py -d $TMP_DIR/dot-files
         ./vis-dot.sh
 
-	# Construct seed corpus
 	# Construct seed corpus
 	if [ ! -d ./in ] ;then
 	    mkdir ./in
@@ -71,6 +70,8 @@ if [ "$2" != "-" ] ; then
 		echo "awsd"> ./in/words
 	fi
 	rm -rf ./out
+        
+        
 fi
-#gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c 2m -i in -o out $SUBJECT/${TARGET}_profiled @@
-/usr/bin/time -a -o time.txt $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c 1m -i in -o out  $SUBJECT/${TARGET}_profiled @@
+#gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c 2m -i in -o out -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
+/usr/bin/time -a -o time.txt $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c 1m -i in -o out -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
