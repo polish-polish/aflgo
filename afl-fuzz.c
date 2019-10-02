@@ -1185,7 +1185,7 @@ static const u8 simplify_lookup[256] = {
 #ifdef __x86_64__
 
 static void simplify_trace(u64* mem) {
-  return; //add by yangke
+
   u32 i = MAP_SIZE >> 3;
 
   while (i--) {
@@ -1279,7 +1279,7 @@ EXP_ST void init_count_class16(void) {
 #ifdef __x86_64__
 
 static inline void classify_counts(u64* mem) {
-  return;//add by yangke
+
   u32 i = MAP_SIZE >> 3;
 
   while (i--) {
