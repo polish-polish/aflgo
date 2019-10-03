@@ -3492,7 +3492,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 	      update_margin_bbs();
 		  if(has_new_var_bits(virgin_var_bits)){
 			  print_mutation_table();
-			  OKF("branch variable value changed in this mutation! We find an optimize point!");
+			  OKF("branch variable value changed in this mutation! set up mut_prior_mode=1 exploit the record mutation!");
 			  mut_prior_mode=1;
 			  //FATAL("branch variable value changed in this mutation! We find an optimize point!");
 			  //TODO: analyze valid input bytes and promising mutation opeartions

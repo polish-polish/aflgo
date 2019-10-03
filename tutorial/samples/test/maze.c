@@ -4,7 +4,11 @@
  * It's a maze!
  * Use a,s,d,w to move "through" it.
  */
- 
+
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
 #include<string.h>
 #include<stdio.h>
 #include<stdlib.h>
@@ -48,6 +52,8 @@ void draw ()
 int
 main (int argc, char *argv[])
 {
+    if (argc!=2) //add by yangke
+        return -1; //add by yangke
         int x, y;     //Player position
         int ox, oy;   //Old player position
         int i = 0;    //Iteration number
@@ -67,10 +73,11 @@ main (int argc, char *argv[])
     printf ("Try to reach the price(#)!\n");
  
 //Draw the maze
-    draw ();    
+    draw ();
 //Read the directions 'program' to execute...
-    read(0,program,ITERS);
- 
+    int  fd = open(argv[1], O_RDONLY | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+    read(fd, program,ITERS);//read(0, program,ITERS);
+    close(fd);
 //Iterate and run 'program'
         while(i < ITERS)
           {
@@ -136,3 +143,7 @@ main (int argc, char *argv[])
 //You couldn't make it! You loose!       
 printf("You loose\n");
 }
+/* known answers 
+   ssssddddwwaawwddddssssddwwww
+   ssssddddwwaawwddddsddwwdwww
+*/

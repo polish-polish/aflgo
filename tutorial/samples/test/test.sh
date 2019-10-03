@@ -12,6 +12,7 @@ ITER=60
 cd $AFLGO/tutorial/samples/test
 
 rm ./time*
+
 for((i=1;i<=$((ITER));i++));  
 do
 # Construct seed corpus
@@ -29,15 +30,13 @@ rm -rf ./out
 done 
 
 
-./compile_and_test_with_aflgo_origin.sh
+./compile_and_test_with_aflgo_origin.sh $TARGET
 AFLGO=/home/yangke/Program/AFL/aflgo/bak/aflgo-good
 SUBJECT=$AFLGO/tutorial/samples/test
 AFLGO=/home/yangke/Program/AFL/aflgo/bak/aflgo-origin
 
-
 for((i=1;i<=$((ITER));i++));  
 do
-# Construct seed corpus
 rm -rf ./out
 /usr/bin/time -a -o time1m-${TARGET}-aflgo-bad.txt $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c 1m -i in -o out $SUBJECT/${TARGET}_profiled @@
 done 
@@ -46,7 +45,6 @@ done
 
 for((i=1;i<=$((ITER));i++));  
 do
-# Construct seed corpus
 rm -rf ./out
 /usr/bin/time -a -o time2m-${TARGET}-aflgo-bad.txt $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c 2m -i in -o out $SUBJECT/${TARGET}_profiled @@
 done 
@@ -60,4 +58,5 @@ echo time1m-${TARGET}-aflgo-bad
 ./show-wall-time.sh time1m-${TARGET}-aflgo-bad.txt
 echo time2m-${TARGET}-aflgo-bad
 ./show-wall-time.sh time2m-${TARGET}-aflgo-bad.txt
+
 

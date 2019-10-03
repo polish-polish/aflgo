@@ -16,11 +16,11 @@ if [ "$2" != "-" ] ; then
         #rm -rf ./temp *.bc *.resolution.txt *.o
 	mkdir ./temp
 	if [ "$TARGET" == "entry" ] ; then
-		echo "entry.c:45"> ./temp/BBtargets.txt
+		echo "entry.c:47"> ./temp/BBtargets.txt
 	elif [ "$TARGET" == "regex" ] ; then
-		echo "regex.c:75"> ./temp/BBtargets.txt
+		echo "regex.c:88"> ./temp/BBtargets.txt
 	elif [ "$TARGET" == "maze" ] ; then
-		echo "maze.c:104"> ./temp/BBtargets.txt
+		echo "maze.c:111"> ./temp/BBtargets.txt
 	fi
 	pushd $AFLGO
 	#make clean all
@@ -57,18 +57,18 @@ if [ "$2" != "-" ] ; then
         ./vis-dot.sh
 
 	# Construct seed corpus
-	# Construct seed corpus
 	if [ ! -d ./in ] ;then
 	    mkdir ./in
 	else
 	    rm ./in/*
 	fi
         if [ "$TARGET" == "entry" ] ; then
-		echo "whoamiwhoamiwhoami"> ./in/words
+		echo "whoamiwhoamiwhoami"> ./in/words #valid answer e.g. "_ _ _ _bai"
 	elif [ "$TARGET" == "regex" ] ; then
-		echo "^.*$"> ./in/words
+		#echo "*a.^b\$c"> ./in/words #valid answer e.g. ".*"
+                echo "abc"> ./in/words 
 	elif [ "$TARGET" == "maze" ] ; then
-		echo "awsd"> ./in/words
+		echo "awsd"> ./in/words #valid answer e.g. "ssssddddwwaawwddddssssddwwww" "ssssddddwwaawwddddsddwwdwww"
 	fi
 	rm -rf ./out
 fi
