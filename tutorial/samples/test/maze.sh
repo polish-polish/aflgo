@@ -7,5 +7,5 @@ mkdir ./maze_testcases
 #ssssddddwwaawwddddssssddwwww
 #ssssddddwwaawwddddsddwwdwww
 echo sssswwaawwddddssssddwwww > ./maze_testcases/answer1
-~/Program/AFL/afl-2.35b/afl-fuzz -i maze_testcases -m 100 -o maze_findings ./maze_profiled
+~/Program/AFL/afl-2.35b/afl-fuzz -i maze_testcases -m 100 -o maze_findings ./maze_profiled @@
 

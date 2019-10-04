@@ -68,7 +68,8 @@ if [ "$2" != "-" ] ; then
 		#echo "*a.^b\$c"> ./in/words #valid answer e.g. ".*"
                 echo "abc"> ./in/words 
 	elif [ "$TARGET" == "maze" ] ; then
-		echo "awsd"> ./in/words #valid answer e.g. "ssssddddwwaawwddddssssddwwww" "ssssddddwwaawwddddsddwwdwww"
+		echo "sssswwaawwddddssssddwwww"> ./in/words
+                #valid answer e.g. "ssssddddwwaawwddddssssddwwww" "ssssddddwwaawwddddsddwwdwww" "sddwddddsddwdw" "ssssddddwwaawwddddsddwdw"
 	fi
 	rm -rf ./out
 fi

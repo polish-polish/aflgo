@@ -6619,14 +6619,14 @@ havoc_stage:
 
           /* Flip a single bit somewhere. Spooky! */
     	  /* add by yangke start */
-    	  if (!mut_prior_mode||arg[1]==-1){
+    	  if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len<<3)){
     		  arg[1]=UR(temp_len << 3);
     	  }//else{arg[1]= (arg[1]>>3)+UR(8));}
     	  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
     	      record_mutation(0,arg[1]>>3);
     	  }
 
-    	  FLIP_BIT(out_buf,arg[1]);
+    	  FLIP_BIT(out_buf,arg[1]);//be careful of heap overflow
 
 
           /* add by yangke end */
@@ -6638,7 +6638,7 @@ havoc_stage:
           /* Set byte to interesting value. */
 
           /* add by yangke start */
-          if (!mut_prior_mode||arg[1]==-1){
+          if (!mut_prior_mode||arg[1]==-1||arg[1]>=temp_len){
         	  arg[1]=UR(temp_len);
 		  }
           if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
@@ -6659,7 +6659,7 @@ havoc_stage:
 
           /* add by yangke start */
 
-          if (!mut_prior_mode||arg[1]==-1){
+          if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len-1)){
         	  arg[1]=UR(temp_len - 1);
           }
           if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
@@ -6691,7 +6691,7 @@ havoc_stage:
           if (temp_len < 4) break;
 
           /* add by yangke start */
-          if (!mut_prior_mode||arg[1]==-1){
+          if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len-3)){
               arg[1]=UR(temp_len - 3);
           }
           if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
@@ -6718,7 +6718,7 @@ havoc_stage:
           /* Randomly subtract from byte. */
 
           /* add by yangke start */
-          if (!mut_prior_mode||arg[1]==-1){
+          if (!mut_prior_mode||arg[1]==-1||arg[1]>=temp_len){
 			  arg[1]=UR(temp_len);
 		  }
 		  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
@@ -6734,7 +6734,7 @@ havoc_stage:
           /* Randomly add to byte. */
 
           /* add by yangke start */
-          if (!mut_prior_mode||arg[1]==-1){
+          if (!mut_prior_mode||arg[1]==-1||arg[1]>=temp_len){
 			  arg[1]=UR(temp_len);
 		  }
 		  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
@@ -6750,7 +6750,7 @@ havoc_stage:
 
           if (temp_len < 2) break;
           /* add by yangke start */
-          if (!mut_prior_mode||arg[1]==-1){
+          if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len-1)){
 			  arg[1]=UR(temp_len-1);
 		  }
 		  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
@@ -6783,7 +6783,7 @@ havoc_stage:
           if (temp_len < 2) break;
 
           /* add by yangke start */
-          if (!mut_prior_mode||arg[1]==-1){
+          if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len-1)){
 			  arg[1]=UR(temp_len-1);
 		  }
 		  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
