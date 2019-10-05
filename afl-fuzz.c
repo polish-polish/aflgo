@@ -5391,7 +5391,7 @@ static inline void dispatch_random(u32 range,u32 * arg)
 		}
 	}
 
-	if (UR(100)>SELECT_RATIO){
+	if (valid_mut_cnt==0||UR(100)>SELECT_RATIO){
 		arg[0]=UR(range);
 		arg[1]=-1;
 	}else{
@@ -6663,7 +6663,7 @@ havoc_stage:
         	  arg[1]=UR(temp_len - 1);
           }
           if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
-              record_mutation(2,UR(temp_len - 1));
+              record_mutation(2,arg[1]);
           }
 
 
