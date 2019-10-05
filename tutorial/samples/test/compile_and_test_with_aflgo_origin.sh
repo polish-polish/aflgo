@@ -20,7 +20,7 @@ if [ "$2" != "-" ] ; then
 	elif [ "$TARGET" == "regex" ] ; then
 		echo "regex.c:88"> ./temp/BBtargets.txt
 	elif [ "$TARGET" == "maze" ] ; then
-		echo "maze.c:111"> ./temp/BBtargets.txt
+		echo "maze.c:109"> ./temp/BBtargets.txt
 	fi
 	pushd $AFLGO
 	#make clean all
@@ -68,7 +68,7 @@ if [ "$2" != "-" ] ; then
 		#echo "*a.^b\$c"> ./in/words #valid answer e.g. ".*"
                 echo "abc"> ./in/words 
 	elif [ "$TARGET" == "maze" ] ; then
-		echo "sssswwaawwddddssssddwwww"> ./in/words
+		echo "wwaassdd"> ./in/words #good seed: 36s:wwaassdd,6min:ssswwaawwddddssssddwww
                 #valid answer e.g. "ssssddddwwaawwddddssssddwwww" "ssssddddwwaawwddddsddwwdwww" "sddwddddsddwdw" "ssssddddwwaawwddddsddwdw"
 	fi
 	rm -rf ./out

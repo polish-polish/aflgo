@@ -6,6 +6,6 @@ mkdir ./maze_testcases
 #known answers
 #ssssddddwwaawwddddssssddwwww
 #ssssddddwwaawwddddsddwwdwww
-echo sssswwaawwddddssssddwwww > ./maze_testcases/answer1
+echo awsd > ./maze_testcases/answer1
 ~/Program/AFL/afl-2.35b/afl-fuzz -i maze_testcases -m 100 -o maze_findings ./maze_profiled @@
 

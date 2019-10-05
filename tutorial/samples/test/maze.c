@@ -5,10 +5,8 @@
  * Use a,s,d,w to move "through" it.
  */
 
-#include <sys/types.h>
-#include <sys/stat.h>
 #include <fcntl.h>
-
+#include <unistd.h>
 #include<string.h>
 #include<stdio.h>
 #include<stdlib.h>
@@ -110,7 +108,7 @@ main (int argc, char *argv[])
                     {
                             printf ("You win!\n");
                             printf ("Your solution <%42s>\n",program);
-                            *(int *)0=0;
+                            abort();
                             exit (1);
                     }
           //If something is wrong do not advance
@@ -146,4 +144,5 @@ printf("You loose\n");
 /* known answers 
    ssssddddwwaawwddddssssddwwww
    ssssddddwwaawwddddsddwwdwww
+   sddwddddsddw
 */

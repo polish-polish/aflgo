@@ -8,7 +8,7 @@ TARGET=$1
 AFLGO=/home/yangke/Program/AFL/aflgo/bak/aflgo-good
 SUBJECT=$AFLGO/tutorial/samples/test
 TMP_DIR=$AFLGO/tutorial/samples/test/temp
-ITER=60
+ITER=10
 cd $AFLGO/tutorial/samples/test
 
 rm ./time*

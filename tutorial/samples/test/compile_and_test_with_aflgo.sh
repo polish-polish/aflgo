@@ -19,26 +19,25 @@ if [ "$2" != "-" ] ; then
 	elif [ "$TARGET" == "regex" ] ; then
 		echo "regex.c:88"> ./temp/BBtargets.txt
 	elif [ "$TARGET" == "maze" ] ; then
-		echo "maze.c:111"> ./temp/BBtargets.txt
+		echo "maze.c:109"> ./temp/BBtargets.txt #specify the first line number of a basic block, the fuzzer cannot locate a basic block by a secord or following line number"
 	fi
 
 	pushd $AFLGO
-	#make clean all
+	#CC=clang CFLAGS="-fsanitize=address -fno-omit-frame-pointer" make clean all
 	make
 	cd $AFLGO/llvm_mode
-	#make clean all
+	#CC=clang CXXFLAGS="-fsanitize=address -fno-omit-frame-pointer" make clean all
 	make
 	popd
 	CC=$AFLGO/afl-clang-fast
 	gcc ./${TARGET}.c -o ${TARGET}
         clang ${TARGET}.c -emit-llvm -S -c -o ${TARGET}.ll
 	$CC $ADDITIONAL $LDFLAGS  ./${TARGET}.c -o ${TARGET}_profiled
-        set -v 
+        #set -v 
 	# Clean up
 	cat $TMP_DIR/BBnames.txt | rev | cut -d: -f2- | rev | sort | uniq > $TMP_DIR/BBnames2.txt && mv $TMP_DIR/BBnames2.txt $TMP_DIR/BBnames.txt
 	cat $TMP_DIR/BBcalls.txt | sort | uniq > $TMP_DIR/BBcalls2.txt && mv $TMP_DIR/BBcalls2.txt $TMP_DIR/BBcalls.txt
         
-	
 	# Generate distance
 	$AFLGO/scripts/genDistance.sh $SUBJECT $TMP_DIR ${TARGET}
         
@@ -68,12 +67,13 @@ if [ "$2" != "-" ] ; then
 		#echo "*a.^b\$c"> ./in/words #valid answer e.g. ".*"
                 echo "abc"> ./in/words 
 	elif [ "$TARGET" == "maze" ] ; then
-		echo "sssswwaawwddddssssddwwww"> ./in/words
+		echo "wwaassdd"> ./in/words #good seed: 36s:wwaassdd,6min:ssswwaawwddddssssddwww
                 #valid answer e.g. "ssssddddwwaawwddddssssddwwww" "ssssddddwwaawwddddsddwwdwww" "sddwddddsddwdw" "ssssddddwwaawwddddsddwdw"
 	fi
 	rm -rf ./out
+
         
         
 fi
 #gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c 2m -i in -o out -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
-/usr/bin/time -a -o time.txt $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c 1m -i in -o out -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
+/usr/bin/time -a -o time.txt $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c 2m -i in -o out -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
