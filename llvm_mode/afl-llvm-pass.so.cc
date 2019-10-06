@@ -98,7 +98,7 @@ protected:
 			GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
 			unsigned int cur_loc);
 	size_t hashName(Value *v);
-	void debug(Value *v);
+	void debug(Value *v,std::string info="#Value#--");
 	void bbRecord(unsigned int cur_loc, BasicBlock &BB,
 			std::ofstream &bbname_id_pairs);
 };
@@ -164,11 +164,11 @@ void AFLCoverage::bbRecord(unsigned int cur_loc, BasicBlock &BB,
 	}
 	bbname_id_pairs << bb_name << "," << cur_loc << "\n";
 }
-void AFLCoverage::debug(Value *v) { //contains format string vulnerability
+void AFLCoverage::debug(Value *v,std::string info) { //contains format string vulnerability
 	std::string var_str;
 	llvm::raw_string_ostream rso(var_str);
 	v->print(rso);
-	OKF("#Value#--:%s", var_str.c_str());
+	OKF("%s:%s", info.c_str(), var_str.c_str());
 }
 //size_t AFLCoverage::hashName(Value *v) {
 //	std::string var_str;
@@ -192,50 +192,57 @@ void AFLCoverage::mapValue(ICmpInst *icmp, Value *v, GlobalVariable *AFLMapPtr,
 	//IntegerType *Int8Ty  = IntegerType::getInt8Ty(C);
 	//IntegerType *Int32Ty = IntegerType::getInt32Ty(C);
 	IntegerType *Int64Ty = IntegerType::getInt64Ty(C);
-	BasicBlock::iterator myIP = BB.getFirstInsertionPt();
-	BasicBlock::iterator InsertIP = myIP;
-	while (myIP != BB.end()) {
-		InsertIP = myIP;
-		if (ICmpInst * temp = dyn_cast < ICmpInst > (&(*myIP))) {
+	BasicBlock::iterator IP = BB.getFirstInsertionPt();
+	BasicBlock::iterator InsertIP=IP;
+        debug(v,"Value to store");
+        for(int i=0;IP!= BB.end();IP++,i++)
+	{
+		std::string info_str;
+		llvm::raw_string_ostream rso(info_str);
+		rso<<"BBInst["<<i<<"]";
+		debug(&(*IP),rso.str());
+		if (ICmpInst * temp = dyn_cast < ICmpInst > (&(*IP))) {
 			if (icmp == temp) {
-				InsertIP = ++myIP;
+				InsertIP = IP;
 				break;
 			}
 
 		}
-		myIP++;
 	}
 	IRBuilder<> IRB(&(*InsertIP));
 	//use Int64Ty
 	/* Load SHM pointer */
 
 	LoadInst *MapPtr = IRB.CreateLoad(AFLMapPtr);
-
-	debug(MapPtr);
-
+	MapPtr->setMetadata(M.getMDKindID("nosanitize"),MDNode::get(C, None));
+	debug(MapPtr,"MapPtr\t");
+        
 #ifdef __x86_64__
 	IntegerType *LargestType = Int64Ty;
-	ConstantInt *MapVarLocStart = ConstantInt::get(LargestType, MAP_SIZE +16);
-	ConstantInt *MapValueLoc = ConstantInt::get(LargestType, cur_loc<<3);
+	ConstantInt *Offset = ConstantInt::get(LargestType, MAP_SIZE +16+(cur_loc<<3));
 #else
 	IntegerType *LargestType = Int32Ty;
-	ConstantInt *MapVarLocStart = ConstantInt::get(LargestType, MAP_SIZE +16);
-	ConstantInt *MapValueLoc = ConstantInt::get(LargestType, cur_loc<<2);
+	ConstantInt *Offset = ConstantInt::get(LargestType, MAP_SIZE +16+(cur_loc<<2));
 #endif
+	
+	Value *MapValuePtr = IRB.CreateGEP(MapPtr, Offset);
+	debug(MapValuePtr,"MapValuePtr\t");
 
-	Value *MapValuePtrStart = IRB.CreateGEP(MapPtr, MapVarLocStart);
+#ifdef LLVM_OLD_DEBUG_API
+	LoadInst * pre_v = IRB.CreateLoad(MapValuePtr);
+	pre_v->mutateType(LargestType);
+#else
+	LoadInst * pre_v = IRB.CreateLoad(LargestType,MapValuePtr);
+#endif
+	pre_v->setMetadata(M.getMDKindID("nosanitize"),MDNode::get(C, None));    
+	debug(pre_v,"pre_v\t");
 
-	MapPtr->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-	Value *MapValuePtr = IRB.CreateGEP(MapValuePtrStart, MapValueLoc);
-	debug(v);
-	//Value *casted = IRB.CreateTrunc(v, IRB.getInt8Ty());
-	Value * pre_v = IRB.CreateLoad(LargestType,MapValuePtr);
-	debug(pre_v);
-	Value * new_v = IRB.CreateXor(v, pre_v);
-    debug(new_v);
-	StoreInst *myStore = IRB.CreateStore(v, MapValuePtr);
-	debug(myStore);
+	Value * new_v = IRB.CreateXor(IRB.CreateSExt(v,LargestType), pre_v); 
+	debug(new_v,"new_v\t");
+        
+	StoreInst *myStore = IRB.CreateStore(new_v, MapValuePtr);
 	myStore->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+        debug(myStore,"myStore\t");
 
 }
 bool AFLCoverage::runOnModule(Module &M) {
@@ -682,11 +689,8 @@ bool AFLCoverage::runOnModule(Module &M) {
 				/*add by yangke end*/
 				/*add by yangke start*/
 #ifndef YANGKE
-				bool mapit = 1;
-				if (distance < 0)
-					mapit = AFL_R(MAP_SIZE) <= MAP_SIZE >> 3 ? 1 : 0;
-				if (!mapit)
-					continue;
+                                if (distance < 0 && AFL_R(4) < 1) //monitor with probability 1/4 if static analysis said that it's not reachable.
+                                        continue;
 				TerminatorInst *TI = BB.getTerminator();
 
 				if (BranchInst * BI = dyn_cast < BranchInst > (TI)) {

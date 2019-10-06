@@ -64,8 +64,15 @@ static const unsigned int prime_2 = 5009;
 /* Globals needed by the injected instrumentation. The __afl_area_initial region
    is used for instrumentation output before __afl_map_shm() has a chance to run.
    It will end up as .comm, so it shouldn't be too wasteful. */
+/* add by yangke start */
+// Allocate 16 more bytes (used by afl-fuzz distances) and (MAP_SIZE<<bitpow) for variable monitor
+#ifdef __x86_64__
+	u8  __afl_area_initial[MAP_SIZE + 16 + (MAP_SIZE<<3)];
+#else
+	u8  __afl_area_initial[MAP_SIZE + 16 + (MAP_SIZE<<2)];
+#endif
+/* add by yangke end */
 
-u8  __afl_area_initial[MAP_SIZE + 16];
 u8* __afl_area_ptr = __afl_area_initial;
 
 __thread u32 __afl_prev_loc;
@@ -202,8 +209,12 @@ int __afl_persistent_loop(unsigned int max_cnt) {
        before the loop. */
 
     if (is_persistent) {
-
-      memset(__afl_area_ptr, 0, MAP_SIZE + 16);
+#ifdef __x86_64__
+      memset(__afl_area_ptr, 0, MAP_SIZE + 16 + (MAP_SIZE<<3));
+#else
+      memset(__afl_area_ptr, 0, MAP_SIZE + 16 + (MAP_SIZE<<2));
+#endif
+      
       __afl_area_ptr[0] = 1;
       __afl_prev_loc = 0;
     }

@@ -140,8 +140,15 @@ static void remove_shm(void) {
 static void setup_shm(void) {
 
   u8* shm_str;
-
-  shm_id = shmget(IPC_PRIVATE, MAP_SIZE, IPC_CREAT | IPC_EXCL | 0600);
+/* add by yangke start */
+// Allocate 16 more bytes (used by afl-fuzz distances) and (MAP_SIZE<<bitpow) for variable monitor
+#ifdef __x86_64__
+  shm_id = shmget(IPC_PRIVATE, MAP_SIZE+ 16 + (MAP_SIZE<<3), IPC_CREAT | IPC_EXCL | 0600);
+#else
+  shm_id = shmget(IPC_PRIVATE, MAP_SIZE+ 16 + (MAP_SIZE<<2), IPC_CREAT | IPC_EXCL | 0600);
+#endif
+/* add by yangke start */
+  
 
   if (shm_id < 0) PFATAL("shmget() failed");
 
