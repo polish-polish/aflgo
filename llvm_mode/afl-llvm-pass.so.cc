@@ -689,8 +689,8 @@ bool AFLCoverage::runOnModule(Module &M) {
 				/*add by yangke end*/
 				/*add by yangke start*/
 #ifndef YANGKE
-                                if (distance < 0 && AFL_R(4) < 1) //monitor with probability 1/4 if static analysis said that it's not reachable.
-                                        continue;
+                //if (distance < 0 && AFL_R(4) < 1) //monitor with probability 1/4 if static analysis said that it's not reachable.
+                //	continue;
 				TerminatorInst *TI = BB.getTerminator();
 
 				if (BranchInst * BI = dyn_cast < BranchInst > (TI)) {

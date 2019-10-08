@@ -35,17 +35,17 @@ def merge_all_cfg(file_dir):
                 GG=nx.union(GG,G)
     print nx.info(GG)
     return GG
-def getNameFromLabel(node):
-    #print node
+def getNameFromLabel(n,GG):
+    node=GG.nodes[n]
+    #print node,n
     #e.g. 
     #{'shape': 'record', 'cov': 0, 'label': '"{entry.c:34:}"'}
     #{'shape': 'record', 'cov': 0, 'label': '"{entry.c:26:|{<s0>T|<s1>F}}"'}
     #{'shape': 'record', 'cov': 0, 'label': '"{%23}"'}
-    if ":" in node["label"]:
+    if node.has_key("label") and ":" in node["label"]:
        array=node["label"].split(":")
        return array[0][2:]+":"+array[1]
-    else:
-       return node["label"][2:][:-2]
+    return str(n)
 # Main function
 if __name__ == '__main__':
   is_cg = 1
@@ -64,8 +64,8 @@ if __name__ == '__main__':
       GG.edges[u,v]['cov']=0
   for n in GG.nodes:
       GG.nodes[n]['cov']=0
-      bbname2networkID[getNameFromLabel(GG.nodes[n])]=n
-      networkID2bbname[n]=getNameFromLabel(GG.nodes[n])
+      bbname2networkID[getNameFromLabel(n,GG)]=n
+      networkID2bbname[n]=getNameFromLabel(n,GG)
       #print GG.nodes.data()
   f=open(args.dot_path+'/../bbname_rid_pairs.txt', "r")
   
@@ -88,7 +88,7 @@ if __name__ == '__main__':
          networkID2rid[id]= bbname2rid[bbname]   
          rid2networkID[bbname2rid[bbname]]=id 
          node_index.append(bbname2rid[bbname]+","+bbname+","+str(id)+"\n")
-      
+  
   node_index=list(set(node_index))
   node_index.sort()
   node_index_file=open(args.dot_path+'/../node_index.txt','w+')
@@ -108,12 +108,13 @@ if __name__ == '__main__':
   in_edge_index.sort()      
   out_edge_index_file=open(args.dot_path+'/../out_edge_index.txt','w+')
   in_edge_index_file=open(args.dot_path+'/../in_edge_index.txt','w+')
+  
   for i in range(len(out_edge_index)):
       out_edge_index_file.write(str(out_edge_index[i][0])+","+str(out_edge_index[i][1])+"\n")
       in_edge_index_file.write(str(in_edge_index[i][0])+","+str(in_edge_index[i][1])+"\n")
 
   out_edge_index_file.close()
-  in_edge_index_file.close()           
+  in_edge_index_file.close()
   #if necessary dump these dict index to files to augment C program running.
   
 # #read from #/home/yangke/Program/AFL/aflgo/aflgo/tutorial/samples/work/out/entry_result/fuzz_bitmap

@@ -5368,10 +5368,10 @@ static inline void record_mutation(int index, int pos)
 {
 	if(index >= MUT_NUM){
 		WARNF("mut[index=%d][pos=%d]+=1; //afl-fuzz.c:5370",index,pos);
-		FATAL("HEY! YANGKE! Mutation index(=%d) out of bound(MUT_NUM=%d)!",index,MUT_NUM);
+		WARNF("HEY! YANGKE! Mutation index(=%d) out of bound(MUT_NUM=%d)!",index,MUT_NUM);
 	}else if(pos >= MAX_MUT_POS){
 		WARNF("mut[index=%d][pos=%d]+=1; //afl-fuzz.c:5373",index,pos);
-		FATAL("HEY! YANGKE! Mutation pos(=%d) out of bound(MAX_MUT_POS=%d)!",pos,MAX_MUT_POS);
+		WARNF("HEY! YANGKE! Mutation pos(=%d) out of bound(MAX_MUT_POS=%d)!",pos,MAX_MUT_POS);
 	}else{
 		mut[index][pos]+=1;
 		mut_cnt[index]++;

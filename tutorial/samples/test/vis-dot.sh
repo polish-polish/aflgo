@@ -1,5 +1,8 @@
 #!/bin/bash
-filenames=$(ls ./temp/dot-files/*.dot)
+if [ ! -n "$1" ] ;then
+   echo "Please provide the dot directory as 1st argument!"; exit 1
+fi
+filenames=$(ls $1/*.dot)
 for file in ${filenames}
 do
 {

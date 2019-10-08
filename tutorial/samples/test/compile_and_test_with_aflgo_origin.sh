@@ -1,26 +1,37 @@
 #!/bin/bash
+TARGET=$1
 AFLGO=/home/yangke/Program/AFL/aflgo/bak/aflgo-origin
 AFLGO_GOOD=/home/yangke/Program/AFL/aflgo/bak/aflgo-good
-export TMP_DIR=$AFLGO_GOOD/tutorial/samples/test/temp
-export ADDITIONAL="-targets=$TMP_DIR/BBtargets.txt -outdir=$TMP_DIR -flto -fuse-ld=gold -Wl,-plugin-opt=save-temps"
-export LDFLAGS=-lpthread
-export SUBJECT=$AFLGO_GOOD/tutorial/samples/test
+TMP_DIR=$AFLGO_GOOD/tutorial/samples/test/${TARGET}_temp
+ADDITIONAL="-targets=$TMP_DIR/BBtargets.txt -outdir=$TMP_DIR -flto -fuse-ld=gold -Wl,-plugin-opt=save-temps"
+LDFLAGS=-lpthread
+SUBJECT=$AFLGO_GOOD/tutorial/samples/test
+DIR_IN=${SUBJECT}/${TARGET}_in
+DIR_OUT=${SUBJECT}/${TARGET}_out
 if [ ! -n "$1" ] ;then
 	echo "Please provide the program name as the first argument. e.g 'entry' for entry.c in samples directory."
 fi
-TARGET=$1
+TIME=2m
+if [ "$TARGET" == "entry" ] ; then
+	TIME=1m
+elif [ "$TARGET" == "regex" ] ; then
+	TIME=2m
+elif [ "$TARGET" == "maze" ] ; then
+	TIME=15m
+fi
 if [ "$2" != "-" ] ; then
 	if [ ! -f ./${TARGET}.c ]; then
 	    exit 1
 	fi
-        #rm -rf ./temp *.bc *.resolution.txt *.o
-	mkdir ./temp
+        rm -rf $TMP_DIR
+	#rm *.bc *.resolution.txt *.o
+	mkdir $TMP_DIR
 	if [ "$TARGET" == "entry" ] ; then
-		echo "entry.c:47"> ./temp/BBtargets.txt
+		echo "entry.c:47"> $TMP_DIR/BBtargets.txt
 	elif [ "$TARGET" == "regex" ] ; then
-		echo "regex.c:88"> ./temp/BBtargets.txt
+		echo "regex.c:88"> $TMP_DIR/BBtargets.txt
 	elif [ "$TARGET" == "maze" ] ; then
-		echo "maze.c:109"> ./temp/BBtargets.txt
+		echo "maze.c:109"> $TMP_DIR/BBtargets.txt
 	fi
 	pushd $AFLGO
 	#make clean all
@@ -54,24 +65,27 @@ if [ "$2" != "-" ] ; then
 	$CC $CFLAGS  ./${TARGET}.c -o ${TARGET}_profiled
 
 	$AFLGO/scripts/index_all_cfg_edges.py -d $TMP_DIR/dot-files
-        ./vis-dot.sh
+        ./vis-dot.sh $TMP_DIR/dot-files
 
 	# Construct seed corpus
-	if [ ! -d ./in ] ;then
-	    mkdir ./in
+	if [ ! -d $DIR_IN ] ;then
+	    mkdir $DIR_IN
 	else
-	    rm ./in/*
+	    rm $DIR_IN/*
 	fi
-        if [ "$TARGET" == "entry" ] ; then
-		echo "whoamiwhoamiwhoami"> ./in/words #valid answer e.g. "_ _ _ _bai"
+	if [ "$TARGET" == "entry" ] ; then
+		echo "whoamiwhoamiwhoami"> $DIR_IN/words 
+		#valid answer e.g. "_ _ _ _bai"
 	elif [ "$TARGET" == "regex" ] ; then
-		#echo "*a.^b\$c"> ./in/words #valid answer e.g. ".*"
-                echo "abc"> ./in/words 
+		echo "abc"> $DIR_IN/words
+		#echo "*a.^b\$c"> $DIR_IN/words
+		#valid answer e.g. ".*"
 	elif [ "$TARGET" == "maze" ] ; then
-		echo "wwaassdd"> ./in/words #good seed: 36s:wwaassdd,6min:ssswwaawwddddssssddwww
-                #valid answer e.g. "ssssddddwwaawwddddssssddwwww" "ssssddddwwaawwddddsddwwdwww" "sddwddddsddwdw" "ssssddddwwaawwddddsddwdw"
+                echo "sddwsddwdw"> $DIR_IN/words 
+		#good seed: 36s:wwaassdd,6min:ssswwaawwddddssssddwww
+		#valid answer e.g. "ssssddddwwaawwddddssssddwwww" "ssssddddwwaawwddddsddwwdwww" "sddwddddsddwdw" "ssssddddwwaawwddddsddwdw"
 	fi
-	rm -rf ./out
+	rm -rf $DIR_OUT
 fi
-#gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c 2m -i in -o out $SUBJECT/${TARGET}_profiled @@
-/usr/bin/time -a -o time.txt $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c 1m -i in -o out  $SUBJECT/${TARGET}_profiled @@
+#gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT $SUBJECT/${TARGET}_profiled @@
+/usr/bin/time -a -o time.txt $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT  $SUBJECT/${TARGET}_profiled @@
