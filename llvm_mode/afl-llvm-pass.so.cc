@@ -94,7 +94,7 @@ public:
 
 	bool runOnModule(Module &M) override;
 protected:
-	void mapValue(ICmpInst *icmp, Value *v, GlobalVariable *AFLMapPtr,
+	void mapValue(Value *insert_point, Value *v, GlobalVariable *AFLMapPtr,
 			GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
 			unsigned int cur_loc);
 	size_t hashName(Value *v);
@@ -184,7 +184,7 @@ void AFLCoverage::debug(Value *v,std::string info) { //contains format string vu
 //	return (size_t)(str_hash(name_str));
 //
 //}
-void AFLCoverage::mapValue(ICmpInst *icmp, Value *v, GlobalVariable *AFLMapPtr,
+void AFLCoverage::mapValue(Value *insert_point, Value *v, GlobalVariable *AFLMapPtr,
 		GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
 		unsigned int cur_loc) {
 
@@ -194,19 +194,16 @@ void AFLCoverage::mapValue(ICmpInst *icmp, Value *v, GlobalVariable *AFLMapPtr,
 	IntegerType *Int64Ty = IntegerType::getInt64Ty(C);
 	BasicBlock::iterator IP = BB.getFirstInsertionPt();
 	BasicBlock::iterator InsertIP=IP;
-        debug(v,"Value to store");
-        for(int i=0;IP!= BB.end();IP++,i++)
+    debug(v,"Value to store");
+    for(int i=0;IP!= BB.end();IP++,i++)
 	{
 		std::string info_str;
 		llvm::raw_string_ostream rso(info_str);
 		rso<<"BBInst["<<i<<"]";
 		debug(&(*IP),rso.str());
-		if (ICmpInst * temp = dyn_cast < ICmpInst > (&(*IP))) {
-			if (icmp == temp) {
-				InsertIP = IP;
-				break;
-			}
-
+		if (&(*IP) == insert_point) {
+			InsertIP = IP;
+			break;
 		}
 	}
 	IRBuilder<> IRB(&(*InsertIP));
@@ -692,23 +689,20 @@ bool AFLCoverage::runOnModule(Module &M) {
                 //if (distance < 0 && AFL_R(4) < 1) //monitor with probability 1/4 if static analysis said that it's not reachable.
                 //	continue;
 				TerminatorInst *TI = BB.getTerminator();
-
+				OKF("add by yangke.");
+				std::string alert_info;
+				llvm::raw_string_ostream rso(alert_info);
+				TI->print(rso);
+				OKF("#TerminatorInst#:%s", alert_info.c_str());
 				if (BranchInst * BI = dyn_cast < BranchInst > (TI)) {
 					if (BI->isConditional()) {
-						OKF("add by yangke.");
-						std::string alert_info;
-						llvm::raw_string_ostream rso(alert_info);
-						TI->print(rso);
-						OKF("#TerminatorInst#:%s", alert_info.c_str());
+
 						Value * v = BI->getCondition();
 						alert_info = "";
 						v->print(rso);
-						OKF("#Depends on Value#:%s", alert_info.c_str());
+						OKF("#Condition Value#:%s", alert_info.c_str());
 						if (ICmpInst * icmp = dyn_cast < ICmpInst > (v)) {
-							alert_info = "";
-							v->print(rso);
-							OKF("#Branch Conditon comes from  ICmpInst#:%s",
-									alert_info.c_str());
+							OKF("#Condition Value is a ICmpInst#");
 							Value * op0 = icmp->getOperand(0);
 //					op0->print(errs());
 //					errs()<<"\n";
@@ -747,11 +741,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 							}
 						} else if (BinaryOperator * BOP = dyn_cast
 								< BinaryOperator > (v)) {
-							alert_info = "";
-							BOP->print(rso);
-							OKF(
-									"#Branch Conditon comes from BinaryOperator#:%s",
-									alert_info.c_str());
+							OKF("#Condition Value is a BinaryOperator#");
 							Value * op0 = BOP->getOperand(0);
 
 							if (ICmpInst * icmp0 = dyn_cast < ICmpInst
@@ -865,6 +855,46 @@ bool AFLCoverage::runOnModule(Module &M) {
 //        		  //StringRef name = v->getName();
 //        		  //errs()<<name<<"\n";
 //        		}
+					}
+				}else if (SwitchInst * SI = dyn_cast < SwitchInst > (TI)) {
+					Value * cond = SI->getCondition();
+					alert_info = "";
+					cond->print(rso);
+					OKF("#Condition Value#:%s", alert_info.c_str());
+					if (CastInst * CI = dyn_cast < CastInst > (cond)) {
+						Value * cast_source= CI->getOperand(0);
+						alert_info = "";
+						cast_source->print(rso);
+						OKF("#Condition Value depends on CastInst#:%s",
+						alert_info.c_str());
+						mapValue(cond, cast_source, AFLMapPtr, AFLPrevLoc, BB,M, cur_loc);
+						if (LoadInst * LI = dyn_cast < LoadInst > (cast_source)) {
+							Value * load_address= LI->getOperand(0);
+							alert_info = "";
+							load_address->print(rso);
+							OKF("#CastInst depends on LoadInst#:%s",
+							alert_info.c_str());
+							mapValue(cond, load_address, AFLMapPtr, AFLPrevLoc, BB,M, cur_loc);
+						}
+						OKF("Instrument[%d] With Condition:CastInst in SwitchInst OK!\n",instrument_cnt++);
+					}else if (LoadInst * LI = dyn_cast < LoadInst > (TI)) {
+						Value * load_address= LI->getOperand(0);
+						alert_info = "";
+						load_address->print(rso);
+						OKF("#Condition Value depends on LoadInst#:%s",
+						alert_info.c_str());
+						mapValue(cond, load_address, AFLMapPtr, AFLPrevLoc, BB,M, cur_loc);
+						OKF("Instrument[%d] With Condition:LoadInst in SwitchInst OK!\n",instrument_cnt++);
+					}
+
+					unsigned num=SI->getNumCases();
+					for (unsigned i=0;i<num;i++)
+					{
+						OKF("#NUM#:%d",num);
+						/*ConstantInt * value=SI->getCaseValue(i);
+						alert_info = "";
+						value->print(rso);
+						OKF("#Case Value#:%s", alert_info.c_str());*/
 					}
 				}
 #endif

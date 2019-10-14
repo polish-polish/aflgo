@@ -19,18 +19,20 @@ int main(int argc, char** argv)
 {
   int  j = 0;
   char local[SEC_LEN]={[0 ... SEC_LEN-1] ='\0'};
+  if (argc!=2)//add by yangke
+     return -1;//add by yangke
   int  fd1 = open(argv[1], O_RDONLY | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
 
   read(fd1, local, SEC_LEN);
   printf("File Content:\n");
   for(int k=0;k<SEC_LEN;k++)
   {
-     printf("local[%d]=%d.\n",k,local[k]);
+     printf("local[%d]=%x,%c.\n",k,local[k],local[k]);
   }
   if (local[7] == 'B' && local[8] == 'a') {
       addOne(&j);
   }
-  if (local[9] == 'i'){ //&& local[3] == '8') {
+  if (local[9] == 'i'){// && local[3] == '8') {
       addTwo(&j);
   }/*
   if (local[4] == '6' ) {

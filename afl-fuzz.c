@@ -321,7 +321,7 @@ static int margin_bb_count=0;
 
 
 
-#define MAX_MUT_POS (1<<12) //100KB
+#define MAX_MUT_POS (1<<12) //4KB
 #define MUT_NUM 10
 static int mut[MUT_NUM][MAX_MUT_POS];//e.g. mut[0][2] mut times of BIT_FLIP(opcode is 0,see afl-fuzz.c:6566) at byte with offset 2 of the input
 static int mut_cnt[MUT_NUM];//mutation times of a each kind of mution
@@ -3457,6 +3457,30 @@ static inline void print_mutation_table()
 			  case 7:
 				  OKF("Randomly add to word, random endian:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
 				  break;
+			  case 8:
+				  OKF("Randomly subtract from dword, random endian:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
+				  break;
+			  case 9:
+				  OKF("Randomly add to dword, random endian:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
+				  break;
+			  case 10:
+			  	  OKF("Just set a random byte to a random value:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
+			  	  break;
+			  case 11 ... 12:
+			  	  OKF("Delete bytes:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
+			  	  break;
+			  case 13:
+				  OKF("Clone bytes (75%%) or insert a block of constant bytes (25%%):\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
+				  break;
+			  case 14:
+				  OKF("Overwrite bytes with a randomly selected chunk (75%%) or fixed bytes (25%%):\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
+				  break;
+			  case 15:
+				  OKF("Overwrite bytes with an extra:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
+				  break;
+			  case 16:
+			  	  OKF("Insert an extra:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
+			  	  break;
 			  default:
 				  FATAL("UNKNOWN MUTATION CODE:%d",i);
 			  }
@@ -5367,11 +5391,11 @@ static void cleanup_mutation_record()
 static inline void record_mutation(int index, int pos)
 {
 	if(index >= MUT_NUM){
-		WARNF("mut[index=%d][pos=%d]+=1; //afl-fuzz.c:5370",index,pos);
-		WARNF("HEY! YANGKE! Mutation index(=%d) out of bound(MUT_NUM=%d)!",index,MUT_NUM);
+		//WARNF("mut[index=%d][pos=%d]+=1; //afl-fuzz.c:5370",index,pos);
+		//WARNF("HEY! YANGKE! Mutation index(=%d) out of bound(MUT_NUM=%d)!",index,MUT_NUM);
 	}else if(pos >= MAX_MUT_POS){
-		WARNF("mut[index=%d][pos=%d]+=1; //afl-fuzz.c:5373",index,pos);
-		WARNF("HEY! YANGKE! Mutation pos(=%d) out of bound(MAX_MUT_POS=%d)!",pos,MAX_MUT_POS);
+		//WARNF("mut[index=%d][pos=%d]+=1; //afl-fuzz.c:5373",index,pos);
+		//WARNF("HEY! YANGKE! Mutation pos(=%d) out of bound(MAX_MUT_POS=%d)!",pos,MAX_MUT_POS);
 	}else{
 		mut[index][pos]+=1;
 		mut_cnt[index]++;
@@ -6814,21 +6838,30 @@ havoc_stage:
 
           if (temp_len < 4) break;
 
+          /* add by yangke start */
+		  if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len-3)){
+			  arg[1]=UR(temp_len - 3);
+		  }
+		  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
+			  record_mutation(8,arg[1]);
+		  }
+
           if (UR(2)) {
 
-            u32 pos = UR(temp_len - 3);
+            u32 pos = arg[1];
 
             *(u32*)(out_buf + pos) -= 1 + UR(ARITH_MAX);
 
           } else {
 
-            u32 pos = UR(temp_len - 3);
+            u32 pos = arg[1];
             u32 num = 1 + UR(ARITH_MAX);
 
             *(u32*)(out_buf + pos) =
               SWAP32(SWAP32(*(u32*)(out_buf + pos)) - num);
 
           }
+          /* add by yangke end */
 
           break;
 
@@ -6838,21 +6871,29 @@ havoc_stage:
 
           if (temp_len < 4) break;
 
+          /* add by yangke start */
+		  if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len-3)){
+			  arg[1]=UR(temp_len - 3);
+		  }
+		  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
+			  record_mutation(9,arg[1]);
+		  }
           if (UR(2)) {
 
-            u32 pos = UR(temp_len - 3);
+            u32 pos = arg[1];
 
             *(u32*)(out_buf + pos) += 1 + UR(ARITH_MAX);
 
           } else {
 
-            u32 pos = UR(temp_len - 3);
+            u32 pos = arg[1];
             u32 num = 1 + UR(ARITH_MAX);
 
             *(u32*)(out_buf + pos) =
               SWAP32(SWAP32(*(u32*)(out_buf + pos)) + num);
 
           }
+          /* add by yangke end */
 
           break;
 
@@ -6862,7 +6903,15 @@ havoc_stage:
              why not. We use XOR with 1-255 to eliminate the
              possibility of a no-op. */
 
-          out_buf[UR(temp_len)] ^= 1 + UR(255);
+          /* add by yangke start */
+		  if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len)){
+			  arg[1]=UR(temp_len);
+		  }
+		  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
+			  record_mutation(10,arg[1]);
+		  }
+          out_buf[arg[1]] ^= 1 + UR(255);
+          /* add by yangke end */
           break;
 
         case 11 ... 12: {
@@ -6879,7 +6928,17 @@ havoc_stage:
 
             del_len = choose_block_len(temp_len - 1);
 
-            del_from = UR(temp_len - del_len + 1);
+            /* add by yangke start */
+            if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len - del_len + 1)){
+            	arg[1]=UR(temp_len - del_len + 1);
+			}
+			if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
+				record_mutation(11,arg[1]);
+				record_mutation(12,arg[1]);
+			}
+
+            del_from = arg[1];
+            /* add by yangke end */
 
             memmove(out_buf + del_from, out_buf + del_from + del_len,
                     temp_len - del_from - del_len);
@@ -6912,7 +6971,15 @@ havoc_stage:
 
             }
 
-            clone_to   = UR(temp_len);
+            /* add by yangke start */
+            if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len)){
+                arg[1]=UR(temp_len);
+            }
+            if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
+                record_mutation(13,arg[1]);
+            }
+            clone_to   = arg[1];
+            /* add by yangke end */
 
             new_buf = ck_alloc_nozero(temp_len + clone_len);
 
@@ -6952,7 +7019,16 @@ havoc_stage:
             copy_len  = choose_block_len(temp_len - 1);
 
             copy_from = UR(temp_len - copy_len + 1);
-            copy_to   = UR(temp_len - copy_len + 1);
+            /* add by yangke start */
+
+			if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len - copy_len + 1)){
+				arg[1]=UR(temp_len - copy_len + 1);
+			}
+			if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
+				record_mutation(14,arg[1]);
+			}
+            copy_to   = arg[1];
+            /* add by yangke end */
 
             if (UR(4)) {
 
@@ -6983,8 +7059,15 @@ havoc_stage:
               u32 insert_at;
 
               if (extra_len > temp_len) break;
-
-              insert_at = UR(temp_len - extra_len + 1);
+              /* add by yangke start */
+			  if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len - extra_len + 1)){
+				  arg[1]=UR(temp_len - extra_len + 1);
+			  }
+			  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
+			  	  record_mutation(15,arg[1]);
+			  }
+              insert_at = arg[1];
+              /* add by yangke end */
               memcpy(out_buf + insert_at, a_extras[use_extra].data, extra_len);
 
             } else {
@@ -6997,7 +7080,15 @@ havoc_stage:
 
               if (extra_len > temp_len) break;
 
-              insert_at = UR(temp_len - extra_len + 1);
+              /* add by yangke start */
+			  if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len - extra_len + 1)){
+				  arg[1]=UR(temp_len - extra_len + 1);
+			  }
+			  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
+				  record_mutation(15,arg[1]);
+			  }
+			  insert_at = arg[1];
+              /* add by yangke end */
               memcpy(out_buf + insert_at, extras[use_extra].data, extra_len);
 
             }
@@ -7007,8 +7098,16 @@ havoc_stage:
           }
 
         case 16: {
+            /* add by yangke start */
+		    if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len + 1)){
+			    arg[1]=UR(temp_len + 1);
+		    }
+		    if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
+			    record_mutation(16,arg[1]);
+		    }
+		    u32 use_extra, extra_len, insert_at = arg[1];
+		    /* add by yangke end */
 
-            u32 use_extra, extra_len, insert_at = UR(temp_len + 1);
             u8* new_buf;
 
             /* Insert an extra. Do the same dice-rolling stuff as for the

@@ -39,8 +39,7 @@ if [ "$2" != "-" ] ; then
 	#CC=clang CFLAGS="-fsanitize=address -fno-omit-frame-pointer" make clean all
 	make
 	cd $AFLGO/llvm_mode
-	#CC=clang CXXFLAGS="-fsanitize=address -fno-omit-frame-pointer" make clean all
-	make
+	make #clean all
 	popd
 	CC=$AFLGO/afl-clang-fast
 	gcc ./${TARGET}.c -o ${TARGET}
@@ -91,4 +90,4 @@ if [ "$2" != "-" ] ; then
         
 fi
 #gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
-/usr/bin/time -a -o time.txt $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
+#/usr/bin/time -a -o time.txt $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
