@@ -322,7 +322,7 @@ static int margin_bb_count=0;
 
 
 #define MAX_MUT_POS (1<<12) //4KB
-#define MUT_NUM 10
+#define MUT_NUM 17
 static int mut[MUT_NUM][MAX_MUT_POS];//e.g. mut[0][2] mut times of BIT_FLIP(opcode is 0,see afl-fuzz.c:6566) at byte with offset 2 of the input
 static int mut_cnt[MUT_NUM];//mutation times of a each kind of mution
 static unsigned total_mut_cnt=0;//total mutation opteration times
@@ -5403,15 +5403,19 @@ static inline void record_mutation(int index, int pos)
 	}
 }
 #define SELECT_RATIO 75 //75%
+
 static inline void dispatch_random(u32 range,u32 * arg)
 {
-	u32 valid_mut[MUT_NUM];
+	u32 valid_mut[MUT_NUM][3];
 	u32 valid_mut_cnt=0;
+	u32 sum=0;
 	for(int i=0;i<MUT_NUM;i++)
 	{
 		if (mut_cnt[i]>0)
 		{
-			valid_mut[valid_mut_cnt++]=i;
+			valid_mut[valid_mut_cnt][0]=i;//mut code
+			valid_mut[valid_mut_cnt][1]=(sum+=mut_cnt[i]);//axis point
+ 			valid_mut_cnt++;
 		}
 	}
 
@@ -5419,7 +5423,24 @@ static inline void dispatch_random(u32 range,u32 * arg)
 		arg[0]=UR(range);
 		arg[1]=-1;
 	}else{
-		arg[0]=valid_mut[UR(valid_mut_cnt)];
+		int query=UR(sum);
+		//Binrary search for the interval [valid_mut[x][1],valid_mut[x+1][1]] at which query located
+		//[0,valid_mut[0][1],valid_mut[1][1],...]
+		//   ^               ^
+		//   |               1 = x+1
+		//   0 = x
+		//We select mutation code from the index of right boundary 'x+1'.
+		int low=0,center,high=valid_mut_cnt-1;
+		while(low<high) {
+			center=(low+high)/2;
+			if(query<valid_mut[center][1]) {
+				high=center-1;
+			} else {
+				low=center+1;
+			}
+		}
+		//low is the index we want.
+		arg[0]=valid_mut[low][0];
 		int valid_pos[MAX_MUT_POS];
 		int valid_pos_cnt=0;
 		for(int i=0;i<MAX_MUT_POS;i++){

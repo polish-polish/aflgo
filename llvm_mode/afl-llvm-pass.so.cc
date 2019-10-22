@@ -164,7 +164,7 @@ void AFLCoverage::bbRecord(unsigned int cur_loc, BasicBlock &BB,
 	}
 	bbname_id_pairs << bb_name << "," << cur_loc << "\n";
 }
-void AFLCoverage::debug(Value *v,std::string info) { //contains format string vulnerability
+inline void AFLCoverage::debug(Value *v,std::string info) { //contains format string vulnerability
 	std::string var_str;
 	llvm::raw_string_ostream rso(var_str);
 	v->print(rso);
@@ -686,8 +686,8 @@ bool AFLCoverage::runOnModule(Module &M) {
 				/*add by yangke end*/
 				/*add by yangke start*/
 #ifndef YANGKE
-                //if (distance < 0 && AFL_R(4) < 1) //monitor with probability 1/4 if static analysis said that it's not reachable.
-                //	continue;
+                if (distance < 0 && AFL_R(4) < 1) //monitor with probability 1/4 if static analysis said that it's not reachable.
+                	continue;
 				TerminatorInst *TI = BB.getTerminator();
 				OKF("add by yangke.");
 				std::string alert_info;
@@ -704,19 +704,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 						if (ICmpInst * icmp = dyn_cast < ICmpInst > (v)) {
 							OKF("#Condition Value is a ICmpInst#");
 							Value * op0 = icmp->getOperand(0);
-//					op0->print(errs());
-//					errs()<<"\n";
 							Value * op1 = icmp->getOperand(1);
-//					op1->print(errs());
-//					errs()<<"\n";
-
-//					int id0= op1->getType()->getTypeID();
-//					errs()<<"####"<<id0<<"\n";
-//					unsigned id1= op1->getTypeID();
-//					errs()<<id1<<"\n";
-//					op2->print(errs());
-//					errs()<<"\n";
-
 							ConstantInt * consop0 = dyn_cast < ConstantInt
 									> (op0);
 							if (!consop0
@@ -761,8 +749,6 @@ bool AFLCoverage::runOnModule(Module &M) {
 									op00->print(rso);
 									OKF("--#Find a variable op01#:%s",
 											alert_info.c_str());
-									//unsigned id00=op00->getType()->getTypeID();
-									//OKF("--#ICmpInst0 op00 TypeID#:%d",id00);
 									/* begin instrumentation */
 									mapValue(icmp0, op00, AFLMapPtr, AFLPrevLoc,
 											BB, M, cur_loc);
@@ -781,8 +767,6 @@ bool AFLCoverage::runOnModule(Module &M) {
 									op01->print(rso);
 									OKF("--#Find a variable op01#:%s",
 											alert_info.c_str());
-									//unsigned id01=op01->getType()->getTypeID();
-									//OKF("--#ICmpInst0 op01 TypeID#:%d",id01);
 									/* begin instrumentation */
 									mapValue(icmp0, op01, AFLMapPtr, AFLPrevLoc,
 											BB, M, cur_loc);
@@ -812,8 +796,6 @@ bool AFLCoverage::runOnModule(Module &M) {
 									op10->print(rso);
 									OKF("--#Find a variable op10#:%s",
 											alert_info.c_str());
-									//unsigned id10=op10->getType()->getTypeID();
-									//OKF("--#ICmpInst1 op10 TypeID#:%d",id10);
 									/* begin instrumentation */
 									mapValue(icmp1, op10, AFLMapPtr, AFLPrevLoc,
 											BB, M, cur_loc);
@@ -832,8 +814,6 @@ bool AFLCoverage::runOnModule(Module &M) {
 									op11->print(rso);
 									OKF("--#Find a variable op11#:%s",
 											alert_info.c_str());
-									//unsigned id11=op11->getType()->getTypeID();
-									//OKF("--#ICmpInst1 op11 TypeID#:%d",id11);
 									/* begin instrumentation */
 									mapValue(icmp1, op11, AFLMapPtr, AFLPrevLoc,
 											BB, M, cur_loc);
@@ -858,43 +838,36 @@ bool AFLCoverage::runOnModule(Module &M) {
 					}
 				}else if (SwitchInst * SI = dyn_cast < SwitchInst > (TI)) {
 					Value * cond = SI->getCondition();
-					alert_info = "";
-					cond->print(rso);
-					OKF("#Condition Value#:%s", alert_info.c_str());
+					debug(cond,"#Condition Value#");
 					if (CastInst * CI = dyn_cast < CastInst > (cond)) {
 						Value * cast_source= CI->getOperand(0);
-						alert_info = "";
-						cast_source->print(rso);
-						OKF("#Condition Value depends on CastInst#:%s",
-						alert_info.c_str());
+
+						debug(cast_source,"#Condition Value depends on CastInst#");
 						mapValue(cond, cast_source, AFLMapPtr, AFLPrevLoc, BB,M, cur_loc);
 						if (LoadInst * LI = dyn_cast < LoadInst > (cast_source)) {
 							Value * load_address= LI->getOperand(0);
-							alert_info = "";
-							load_address->print(rso);
-							OKF("#CastInst depends on LoadInst#:%s",
-							alert_info.c_str());
+							debug(load_address,"#CastInst depends on LoadInst#");
 							mapValue(cond, load_address, AFLMapPtr, AFLPrevLoc, BB,M, cur_loc);
 						}
 						OKF("Instrument[%d] With Condition:CastInst in SwitchInst OK!\n",instrument_cnt++);
 					}else if (LoadInst * LI = dyn_cast < LoadInst > (TI)) {
 						Value * load_address= LI->getOperand(0);
-						alert_info = "";
-						load_address->print(rso);
-						OKF("#Condition Value depends on LoadInst#:%s",
-						alert_info.c_str());
+						debug(load_address,"#Condition Value depends on LoadInst#");
 						mapValue(cond, load_address, AFLMapPtr, AFLPrevLoc, BB,M, cur_loc);
 						OKF("Instrument[%d] With Condition:LoadInst in SwitchInst OK!\n",instrument_cnt++);
 					}
 
-					unsigned num=SI->getNumCases();
-					for (unsigned i=0;i<num;i++)
+					unsigned num=0;
+
+					for(SwitchInst::CaseIt it=SI->case_begin();it!=SI->case_end();it++,num++)
 					{
+
 						OKF("#NUM#:%d",num);
-						/*ConstantInt * value=SI->getCaseValue(i);
-						alert_info = "";
-						value->print(rso);
-						OKF("#Case Value#:%s", alert_info.c_str());*/
+						ConstantInt * value=it.getCaseValue();
+						int64_t x=value->getSExtValue();
+						debug(value,"#Case Value#");
+						OKF("#Case Value#SExt#i32:%d", (int)x);
+						//TODO: record and resuse these special data when testing.
 					}
 				}
 #endif

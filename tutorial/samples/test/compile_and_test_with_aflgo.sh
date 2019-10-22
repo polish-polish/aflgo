@@ -81,7 +81,7 @@ if [ "$2" != "-" ] ; then
 		#echo "*a.^b\$c"> $DIR_IN/words
 		#valid answer e.g. ".*"
 	elif [ "$TARGET" == "maze" ] ; then
-                echo "sssswwaawwddddssssddwwww"> $DIR_IN/words 
+                echo "wwaassdd"> $DIR_IN/words 
 		#good seed: 36s:wwaassdd,6min:ssswwaawwddddssssddwww
 		#valid answer e.g. "ssssddddwwaawwddddssssddwwww" "ssssddddwwaawwddddsddwwdwww" "sddwddddsddwdw" "ssssddddwwaawwddddsddwdw"
 	fi
@@ -90,4 +90,11 @@ if [ "$2" != "-" ] ; then
         
 fi
 #gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
-#/usr/bin/time -a -o time.txt $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
+:<<!
+if [ "$TARGET" == "maze" ] ; then
+/usr/bin/time -a -o time.txt $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -x $SUBJECT/maze.dict -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
+else
+/usr/bin/time -a -o time.txt $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
+fi
+!
+
