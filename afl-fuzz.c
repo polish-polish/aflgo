@@ -324,12 +324,33 @@ static int margin_bb_count=0;
 #define MAX_MUT_POS (1<<12) //4KB
 #define MUT_NUM 17
 static int mut[MUT_NUM][MAX_MUT_POS];//e.g. mut[0][2] mut times of BIT_FLIP(opcode is 0,see afl-fuzz.c:6566) at byte with offset 2 of the input
-static int mut_cnt[MUT_NUM];//mutation times of a each kind of mution
+static int mut_cnt[MUT_NUM];//mutation times of a each kind of mution (for value effective filtration).
+static int tmp_mut[MUT_NUM][MAX_MUT_POS];
+static int tmp_mut_cnt[MUT_NUM];
+static int one_fuzz_mut_cnt[MUT_NUM];//mutation times of a each kind of mution(for cov effective statistics)
+static int mut_score[MUT_NUM];//based on cov effective statistics
+static int mutation_score_initialized;//0 for not, 1 for yes
+static int value_changing_mutation_record_initialized;//0 for not, 1 for yes
+static unsigned random_mut=0;
+static unsigned monitor_mut=0;
+static unsigned random_win=0;
+static unsigned monitor_win=0;
+
 static unsigned total_mut_cnt=0;//total mutation opteration times
-static unsigned total_monitored_mut_cnt=0;//we only monitored some of the mutaions,
+static unsigned total_monitored_mut_cnt=0;//we only monitored some of the mutaions
 //so this means times that we current used for mutation proiritization
-#define THRESHOLD_CYCLES_WO_FINDS 2 //threshold for opening mutation proir mode.
-static int mut_prior_mode=0;//flags that indicat we are in mutation prior mode
+#define  INIT_THRESHOLD_CYCLES_WO_FINDS 2//threshold for opening mutation prior mode when startup.
+#define INIT_MUT_LOOP_BOUND 2 //inital mutation loop bound when searching for good mutation.
+#define MAX_MUT_LOOP_BOUND 4 //max mutation loop bound when searching for good mutation.
+#define DELTA 10;
+#define INITIAL_STRIDE 100
+static unsigned stride=INITIAL_STRIDE;
+static unsigned threshold_cycles_wo_finds=INIT_THRESHOLD_CYCLES_WO_FINDS;
+//static unsigned t1=0;//cycles_wo_finds:first time >threshold_cycles_wo_finds
+//static unsigned t2=0;//cycles_wo_finds:switch to mut_prior_mode
+//static unsigned t3=0;//cycles_wo_finds:trigger the change of max_mut_loop_bound
+static unsigned max_mut_loop_bound=INIT_MUT_LOOP_BOUND;
+static int mut_prior_mode=0;//flags that indicate we are in mutation prior mode
 //TODO: add more mutator argument info other than position ...
 
 /* add by yangke end */
@@ -1034,6 +1055,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
   return ret;
 
 }
+/* add by yangke start */
 
 /* Check if the current execution path brings any change for the map of margin key
  * branch variable values in every execution point.
@@ -1046,19 +1068,28 @@ static inline u8 has_new_bits(u8* virgin_map) {
 	u8  ret = 0;
 	u64* vir = (u64*) virgin_var_map;
 	u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
+	//OKF("margin_bb_count=%d",margin_bb_count);
 	for(int i=0;i<margin_bb_count;i++){
 		int rid=margin_bb_rid[i];
-		if(cur[rid] != vir[rid]){
-			OKF("margin_bb_count=%d",margin_bb_count);
-			//for(int j=0;j<margin_bb_count;j++){
-			//	OKF("%d:rid=%d,cur[rid]=%llx,vir[rid]=%llx",j,rid,cur[margin_bb_rid[j]] , vir[margin_bb_rid[j]]);
-			//}
+		/*u8* v=(u8*)&vir[rid];
+		u8* c=(u8*)&cur[rid];
+		OKF("[%d] vir:%x %x %x %x %x %x %x %x\n",i,v[0],v[1],v[2],v[3],v[4],v[5],v[6],v[7]);
+		OKF("[%d] cur:%x %x %x %x %x %x %x %x\n",i,c[0],c[1],c[2],c[3],c[4],c[5],c[6],c[7]);*/
+		if(unlikely(vir[rid] & (~cur[rid]))){
+		///if(unlikely(vir[rid] !=cur[rid])){
+			//find whether there exists a bit where cur is 0 while vir is 1
+			//vir: 1101
+			//cur: 1011
+			//      ^
+			vir[rid]&=cur[rid];
+			///vir[rid]=cur[rid];
 			ret=1;
 		}
-		vir[rid]=cur[rid];
-		vir++;
-		cur++;
 	}
+	//OKF("margin_bb_count=%d",margin_bb_count);
+	//for(int j=0;j<margin_bb_count;j++){
+	//	OKF("%d:rid=%d,cur[rid]=%llx,vir[rid]=%llx",j,rid,cur[margin_bb_rid[j]] , vir[margin_bb_rid[j]]);
+	//}
 	return ret;
   }
 #else
@@ -1069,15 +1100,15 @@ static inline u8 has_new_bits(u8* virgin_map) {
 
 	    for(int i=0;i<margin_bb_count;i++,vir++,cur++){
 	    	int rid=margin_bb_rid[i];
-	    	if(cur[rid] ^ vir[rid]){
-	    		ret=1;
-	    	}
-	    	vir[rid]=cur[rid];
+	    	if(unlikely(cur[rid] & vir[rid])){
+				ret=1;
+				vir[rid]&=~cur[rid];
+			}
 	    }
 	    return ret;
   }
 #endif /* ^__x86_64__ */
-
+/* add by yangke end */
 
 
 /* Count the number of bits set in the provided bitmap. Used for the status
@@ -3423,6 +3454,62 @@ static void update_margin_bbs()
 	//FATAL("KILL BY YANGKE update_margin_bbs.");
 }
 /* add by yangke end */
+static inline char * get_description(int mut_code)
+{
+	switch (mut_code){
+		  case 0:
+			  return "Flip bit.";
+			  break;
+		  case 1:
+			  return "Set byte interesting.";
+			  break;
+		  case 2:
+			  return "Set word interesting.";
+			  break;
+		  case 3:
+			  return "Set dword interesting.";
+			  break;
+		  case 4:
+			  return "Randomly subtract from byte.";
+			  break;
+		  case 5:
+			  return "Randomly add to byte.";
+			  break;
+		  case 6:
+			  return "Randomly subtract from word, random endian.";
+			  break;
+		  case 7:
+			  return "Randomly add to word, random endian.";
+			  break;
+		  case 8:
+			  return "Randomly subtract from dword, random endian.";
+			  break;
+		  case 9:
+			  return "Randomly add to dword, random endian.";
+			  break;
+		  case 10:
+			  return "Just set a random byte to a random value.";
+			  break;
+		  case 11 ... 12:
+		  	  return "Delete bytes.";
+			  break;
+		  case 13:
+			  return "Clone bytes (75%) or insert a block of constant bytes (25%).";
+			  break;
+		  case 14:
+			  return "Overwrite bytes with a randomly selected chunk (75%) or fixed bytes (25%).";
+			  break;
+		  case 15:
+			  return "Overwrite bytes with an extra.";
+			  break;
+		  case 16:
+			  return "Insert an extra.";
+			  break;
+		  default:
+			  FATAL("UNKNOWN MUTATION CODE:%d",mut_code);
+			  return "UNKNOWN MUTATION CODE:";
+	}
+}
 
 static inline void print_mutation_table()
 {
@@ -3432,63 +3519,17 @@ static inline void print_mutation_table()
 	  for(int j=0;j<MAX_MUT_POS;j++)
 	  {
 		  if(mut[i][j]>0){
-			  switch (i){
-			  case 0:
-				  OKF("Flip bit:\t\t\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
-				  break;
-			  case 1:
-				  OKF("Set byte interesting:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
-				  break;
-			  case 2:
-				  OKF("Set word interesting:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
-				  break;
-			  case 3:
-				  OKF("Set dword interesting:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
-				  break;
-			  case 4:
-				  OKF("Randomly subtract from byte:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
-				  break;
-			  case 5:
-				  OKF("Randomly add to byte:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
-				  break;
-			  case 6:
-				  OKF("Randomly subtract from word, random endian:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
-				  break;
-			  case 7:
-				  OKF("Randomly add to word, random endian:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
-				  break;
-			  case 8:
-				  OKF("Randomly subtract from dword, random endian:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
-				  break;
-			  case 9:
-				  OKF("Randomly add to dword, random endian:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
-				  break;
-			  case 10:
-			  	  OKF("Just set a random byte to a random value:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
-			  	  break;
-			  case 11 ... 12:
-			  	  OKF("Delete bytes:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
-			  	  break;
-			  case 13:
-				  OKF("Clone bytes (75%%) or insert a block of constant bytes (25%%):\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
-				  break;
-			  case 14:
-				  OKF("Overwrite bytes with a randomly selected chunk (75%%) or fixed bytes (25%%):\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
-				  break;
-			  case 15:
-				  OKF("Overwrite bytes with an extra:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
-				  break;
-			  case 16:
-			  	  OKF("Insert an extra:\tpos:%d,%d/%d/%d",j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt);
-			  	  break;
-			  default:
-				  FATAL("UNKNOWN MUTATION CODE:%d",i);
-			  }
+			  OKF("%d[%d],%d/%d/%d,%s",i,j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt,get_description(i));
 		  }
 	  }
 
 	}
 }
+/* add by yangke start */
+static inline void cleanup_value_changing_mutation_record();
+static inline void record_value_changing_mutation();
+
+/* add by yangke end */
 
 /* Check if the result of an execve() during routine fuzzing is interesting,
    save or queue the input test case for further analysis if so. Returns 1 if
@@ -3508,28 +3549,90 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
     if (!(hnb = has_new_bits(virgin_bits))) {
       if (crash_mode) total_crashes++;
-      //return 0;//original AFLGO
+
       /* add by yangke start */
-	  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
+	  if (cycles_wo_finds >=threshold_cycles_wo_finds){
 	      if (!cfg_loaded)
 	    	  loadCFG();
 	      update_margin_bbs();
 		  if(has_new_var_bits(virgin_var_bits)){
-			  print_mutation_table();
-			  OKF("branch variable value changed in this mutation! set up mut_prior_mode=1 exploit the record mutation!");
-			  mut_prior_mode=1;
+			  //print_mutation_table();
+			  //OKF("branch variable value changed in this mutation! set up mut_prior_mode=1 exploit the record mutation!");
+			  record_value_changing_mutation();
+			  //cleanup here is not enough
+			  //because if we still need to clean up if we don't find new var bits
+			  //So clean up in the beginning of one_fuzz().
+			  if(!mut_prior_mode){
+				  OKF("Switch to mut_prior_mode!");
+				  mut_prior_mode=1;
+			  }
+			  /*t2=cycles_wo_finds;
+			  t3=cycles_wo_finds+(stride<<1);*/
+
+
+			  //return 0;
 			  //FATAL("branch variable value changed in this mutation! We find an optimize point!");
-			  //TODO: analyze valid input bytes and promising mutation opeartions
+			  //TODO: analyze valid input bytes and promising mutation operations.
 		  }
 		  else{
+			  /*if(cycles_wo_finds>t3){
+				  t3=cycles_wo_finds+stride;
+				  max_mut_loop_bound<<=1;
+				  OKF("#Inc: MAX_MUT_LOOP_BOUND=%d. t3=%d, stride=%d",max_mut_loop_bound,t3,stride);
+				  if(max_mut_loop_bound>MAX_MUT_LOOP_BOUND){
+					  max_mut_loop_bound=INIT_MUT_LOOP_BOUND;
+				  }
+			  }*/
 			  return 0;
 		  }
 	  }else{
 		  return 0;
 	  }
 	  /* add by yangke end */
-    }    
+	  //return 0;//original AFLGO
+    }
+    /* add by yangke start */
+    else{//new coverage findings
+    	////examin mutations that contribute to this new coverage
+    	if (cycles_wo_finds >=threshold_cycles_wo_finds){
+    		//record_value_changing_mutation();
+    		for(int i=0;i<MUT_NUM;i++)
+			{
+				if(one_fuzz_mut_cnt[i]>0){
+					mut_score[i]+=1;//one_fuzz_mut_cnt[i];
+				}
+				OKF("%02d,%d|%d|[%d]%s",i,mut_score[i],mut_cnt[i],tmp_mut_cnt[i],get_description(i));
+			}
+    		int randwin=0;
+    		if(mut_prior_mode){
+    			monitor_win++;
+    			stride+=DELTA;
+    		}else{
+    			//OKF("AFLGo Random defeat Variable Monitor!");
+    			random_win++;
+    			stride-=DELTA;
+    			stride=stride<INITIAL_STRIDE?INITIAL_STRIDE:stride;
+    			randwin=1;
+    		}
+    		OKF("mon/rand mut_times:%d|%d,%0.2f,win_times,%d|%d",monitor_mut,random_mut,(float)monitor_mut/(float)random_mut,monitor_win,random_win);
+    		if (mut_prior_mode){
+    			OKF("Switch back to AFLGO normal mode!");
+    			mut_prior_mode=0;
+    		}
+    		if(randwin){
+    			threshold_cycles_wo_finds+=INIT_THRESHOLD_CYCLES_WO_FINDS;//bonus
+    		}else{
+    			threshold_cycles_wo_finds=INIT_THRESHOLD_CYCLES_WO_FINDS;
+    		}
+    		max_mut_loop_bound=INIT_MUT_LOOP_BOUND;
+    		//t1=t2=t3=0;
+    		cleanup_value_changing_mutation_record();
+    		memset(virgin_var_bits, 255, MAP_SIZE<<3);
+    		//cleanup_possible_value_changing_mutation_record();//useless,just for complete clear
 
+    	}
+    }
+    /* add by yangke end */
 #ifndef SIMPLE_FILES
 
     fn = alloc_printf("%s/queue/id:%06u,%s", out_dir, queued_paths,
@@ -3665,6 +3768,21 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
       unique_crashes++;
       /* add by yangke start */
       OKF("First Crash is Achieved! Exit now!");
+      u8 * statistic_file_name=alloc_printf("%s/statistics", out_dir);
+      u8 * info=alloc_printf("mon/rand mut_times:%d|%d,%0.2f,win_times,%d|%d\n",monitor_mut,random_mut,(float)monitor_mut/(float)random_mut,monitor_win,random_win);
+      int statistic_file_fd = open(statistic_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
+      if (statistic_file_fd < 0) PFATAL("Unable to create '%s'", statistic_file_name);
+      ck_write(statistic_file_fd, info, strlen(info), statistic_file_name);
+      ck_write(statistic_file_fd, mem, len, statistic_file_name);
+      ck_write(statistic_file_fd, "\n", 1, statistic_file_name);
+      close(statistic_file_fd);
+      ck_free(statistic_file_name);
+      ck_free(info);
+      fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
+      if (fd < 0) PFATAL("Unable to create '%s'", fn);
+      ck_write(fd, mem, len, fn);
+      close(fd);
+      ck_free(fn);
       exit(0);
       /* add by yangke end */
 
@@ -5374,9 +5492,10 @@ static u8 could_be_interest(u32 old_val, u32 new_val, u8 blen, u8 check_le) {
 }
 
 /* add by yangke start */
-static void cleanup_mutation_record()
+
+
+static inline void cleanup_value_changing_mutation_record()
 {
-	total_mut_cnt=0;
 	total_monitored_mut_cnt=0;
 	for(int i=0;i<MUT_NUM;i++)
 	{
@@ -5387,8 +5506,74 @@ static void cleanup_mutation_record()
 		}
 	}
 }
-
-static inline void record_mutation(int index, int pos)
+static inline void cleanup_possible_value_changing_mutation_record()
+{
+	for(int i=0;i<MUT_NUM;i++)
+	{
+		tmp_mut_cnt[i]=0;
+		for(int j=0;j<MAX_MUT_POS;j++)
+		{
+			tmp_mut[i][j]=0;
+		}
+	}
+}
+static inline void init_value_changing_mutation_record()
+{
+	total_mut_cnt=0;
+	if (value_changing_mutation_record_initialized==0){
+		cleanup_value_changing_mutation_record();
+		value_changing_mutation_record_initialized=1;
+	}
+}
+static inline void init_mutation_score()
+{
+	if(mutation_score_initialized==0){
+		for(int i=0;i<MUT_NUM;i++)
+		{
+			mut_score[i]=0;
+		}
+		mutation_score_initialized=1;
+	}
+}
+static inline void cleanup_mutation_record()
+{
+	total_mut_cnt=0;
+	for(int i=0;i<MUT_NUM;i++)
+	{
+		one_fuzz_mut_cnt[i]=0;
+	}
+}
+static inline void record_value_changing_mutation()
+{
+	for(int i=0;i<MUT_NUM;i++)
+	{
+		char pos_list_str[MAX_MUT_POS/16]={0};//256
+		char *ptr=pos_list_str;
+		if(tmp_mut_cnt[i]>0)
+		{
+			for(int j=0;j<MAX_MUT_POS;j++)
+			{
+				if(tmp_mut[i][j]>0)
+				{
+					mut[i][j]+=tmp_mut[i][j];
+					int len=sprintf(ptr,"%d,",j);
+					if(len>0){
+						ptr+=len;
+						if(ptr-pos_list_str==MAX_MUT_POS/4){
+							FATAL("Buffer Overflow! in record_value_changing_mutation()");
+						}
+					}else{
+						FATAL("sprintf FAILED! in record_value_changing_mutation()");
+					}
+				}
+			}
+			mut_cnt[i]+=tmp_mut_cnt[i];
+			total_monitored_mut_cnt+=tmp_mut_cnt[i];
+		}
+		//OKF("##%02d,%d|%d|%s%s",i,mut_score[i],mut_cnt[i],pos_list_str,get_description(i));
+	}
+}
+static inline void record_possible_value_changing_mutation(int index, int pos)
 {
 	if(index >= MUT_NUM){
 		//WARNF("mut[index=%d][pos=%d]+=1; //afl-fuzz.c:5370",index,pos);
@@ -5396,51 +5581,73 @@ static inline void record_mutation(int index, int pos)
 	}else if(pos >= MAX_MUT_POS){
 		//WARNF("mut[index=%d][pos=%d]+=1; //afl-fuzz.c:5373",index,pos);
 		//WARNF("HEY! YANGKE! Mutation pos(=%d) out of bound(MAX_MUT_POS=%d)!",pos,MAX_MUT_POS);
-	}else{
-		mut[index][pos]+=1;
-		mut_cnt[index]++;
-		total_monitored_mut_cnt++;
+	}else {
+		tmp_mut[index][pos]+=1;
+		tmp_mut_cnt[index]++;
+		//total_monitored_mut_cnt++;
 	}
 }
-#define SELECT_RATIO 75 //75%
+static inline void record_mutation(int index)
+{//record effective mutation when new coverage is found we look back and make statistics
+	if(index >=0 && index < MUT_NUM){
+		one_fuzz_mut_cnt[index]++;
+	}
+	total_mut_cnt++;
+}
+#define RANDOM_BOUND 90 //85%
+#define VALUE_CHANGE_STRATEGY_BOUND  75//75%
 
-static inline void dispatch_random(u32 range,u32 * arg)
-{
-	u32 valid_mut[MUT_NUM][3];
-	u32 valid_mut_cnt=0;
-	u32 sum=0;
-	for(int i=0;i<MUT_NUM;i++)
-	{
-		if (mut_cnt[i]>0)
-		{
-			valid_mut[valid_mut_cnt][0]=i;//mut code
-			valid_mut[valid_mut_cnt][1]=(sum+=mut_cnt[i]);//axis point
- 			valid_mut_cnt++;
+static inline int binary_search(const int values[],int len,int query_value){
+
+	int sum=values[len-1];
+	if(query_value>sum || query_value<0) FATAL("binary_search ERROR query_value=%d,sum=%d",query_value,sum);
+	//Binrary search for the interval [valid_mut[x][1],valid_mut[x+1][1]] at which query located
+	//[0,valid_mut[0][1],valid_mut[1][1],...]
+	//   ^               ^
+	//   |               1 = x+1
+	//   0 = x
+	//We select mutation code from the index of right boundary 'x+1'.
+	int low=0,center,high=len-1;
+	while(low<high) {
+		center=(low+high)/2;
+		if(query_value<values[center]) {
+			high=center-1;
+		} else {
+			low=center+1;
 		}
 	}
-
-	if (valid_mut_cnt==0||UR(100)>SELECT_RATIO){
-		arg[0]=UR(range);
-		arg[1]=-1;
-	}else{
-		int query=UR(sum);
-		//Binrary search for the interval [valid_mut[x][1],valid_mut[x+1][1]] at which query located
-		//[0,valid_mut[0][1],valid_mut[1][1],...]
-		//   ^               ^
-		//   |               1 = x+1
-		//   0 = x
-		//We select mutation code from the index of right boundary 'x+1'.
-		int low=0,center,high=valid_mut_cnt-1;
-		while(low<high) {
-			center=(low+high)/2;
-			if(query<valid_mut[center][1]) {
-				high=center-1;
-			} else {
-				low=center+1;
+	return low;
+	//low is the index we want.
+}
+static inline void dispatch_random(u32 range,u32 * arg)
+{
+	int valid_mut[MUT_NUM];
+	int bound_values[MUT_NUM];
+	int valid_mut_cnt=0;
+	int sum=0;
+	if (mut_prior_mode){
+		for(int i=0;i<MUT_NUM;i++)
+		{
+			if (mut_cnt[i]>0)
+			{
+				valid_mut[valid_mut_cnt]=i;//mut code
+				if(i<11||i==15)
+				{
+					sum+=4*mut_cnt[i];
+				}else if(i<11||i==15){
+					sum+=mut_cnt[i];
+				}
+				bound_values[valid_mut_cnt]=sum;//bounds which refer to index possibility in x axis
+				valid_mut_cnt++;
 			}
 		}
-		//low is the index we want.
-		arg[0]=valid_mut[low][0];
+	}
+    int rand=UR(100);
+    if (mut_prior_mode==1 && valid_mut_cnt>0 && rand<VALUE_CHANGE_STRATEGY_BOUND){//75%
+    	int index=binary_search(bound_values,valid_mut_cnt,UR(sum));
+    	//OKF("Index:%d,valid_mut_cnt=%d",index,valid_mut_cnt);
+		arg[0]=valid_mut[index];
+    	//arg[0]=valid_mut[UR(valid_mut_cnt)];
 		int valid_pos[MAX_MUT_POS];
 		int valid_pos_cnt=0;
 		for(int i=0;i<MAX_MUT_POS;i++){
@@ -5448,14 +5655,56 @@ static inline void dispatch_random(u32 range,u32 * arg)
 				valid_pos[valid_pos_cnt++]=i;
 			}
 		}
-		arg[1]=valid_pos[UR(valid_pos_cnt)];
-		switch (arg[0]){
-		case 0:
-			arg[1]=(arg[1]<<3)+UR(8);
-			break;
-		default:
-			;
+		if(rand<60){
+			arg[1]=valid_pos[UR(valid_pos_cnt)];
+			switch (arg[0]){
+			case 0:
+				arg[1]=(arg[1]<<3)+UR(8);
+				break;
+			default:
+				;
+			}/*
+			if(rand>40){
+				arg[1]=arg[1]==MAX_MUT_POS-1?arg[1]:arg[1]+1;
+			}else if(rand>40){
+				arg[1]=arg[1]==0?0:arg[1]-1;
+			}*/
+		}else{
+			arg[1]=-1;
 		}
+		if(1<=arg[0] && arg[0]<4){
+			arg[0]=rand%4;
+		}else if(4<=arg[0] && arg[0]<10){
+			arg[0]=4+rand%6;
+		}else if(15==arg[0]||16==arg[0]){
+			arg[0]=15+rand%2;
+		}
+		monitor_mut++;
+    }/*else if (cycles_wo_finds >=threshold_cycles_wo_finds && rand<RANDOM_BOUND){//10%
+
+		int valid_mut_cnt=0;
+		int sum_scaled=0;
+		for(int i=0;i<MUT_NUM;i++)
+		{
+			if(mut_score[i]>0){
+				valid_mut[valid_mut_cnt]=i;
+				sum_scaled+=(int)(mut_score[i]*100);
+				bound_values[valid_mut_cnt]=sum_scaled;
+				valid_mut_cnt++;
+			}
+		}
+		if (sum_scaled==0){
+			arg[0]=UR(range);
+		}else{
+			int index=binary_search(bound_values,valid_mut_cnt,UR(sum_scaled));
+			arg[0]=valid_mut[index];
+		}
+
+		arg[1]=-1;
+	}*/else{//15%
+		arg[0]=UR(range);
+		arg[1]=-1;
+		random_mut++;
 	}
 
 }
@@ -6614,19 +6863,25 @@ havoc_stage:
      where we take the input file and make random stacked tweaks. */
   /* add by yangke start */
 
-  int my_stage_max=stage_max;
+  s32 my_stage_max=stage_max;
 
-  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
-	  if(!mut_prior_mode){
-		  my_stage_max=stage_max>4?4:stage_max;
-		  cleanup_mutation_record();
-	  }else{
-		  OKF("Now our mutations are in mut_prior_mode.");
-	  }
-  }else{
+  init_mutation_score();
+  init_value_changing_mutation_record();
+  cleanup_mutation_record();
+  if (cycles_wo_finds >=threshold_cycles_wo_finds){//in this case we take small steps
+	  /*if(!mut_prior_mode&&t1==0){
+		  t1=cycles_wo_finds;
+		  t3=cycles_wo_finds+stride;
+	  }*/
+	  my_stage_max=stage_max<max_mut_loop_bound?stage_max:max_mut_loop_bound;
+	  //OKF("stage_max=%d,max_mut_loop_bound=%d",stage_max,max_mut_loop_bound);
+	  //flush out rubbish and next time we record new candidates
+	  cleanup_possible_value_changing_mutation_record();
+  }/*else{
 	  mut_prior_mode=0;
-	  cleanup_mutation_record();
-  }
+	  //my_stage_max=stage_max;
+	  cleanup_value_changing_mutation_record();
+  }*/
 
   /* add by yangke end */
   for (stage_cur = 0; stage_cur < my_stage_max; stage_cur++) {
@@ -6637,11 +6892,10 @@ havoc_stage:
     stage_cur_val = use_stacking;
  
     /* add by yangke start */
-    int my_use_stacking=use_stacking;
-    if(cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
-    	if(!mut_prior_mode){
-    		my_use_stacking=use_stacking>4?4:use_stacking;
-    	}
+    u32 my_use_stacking=use_stacking;
+    if(cycles_wo_finds >=threshold_cycles_wo_finds){//in this case we take small steps
+    	my_use_stacking=use_stacking<max_mut_loop_bound?use_stacking:max_mut_loop_bound;
+    	//OKF("use_stacking=%d,max_mut_loop_bound=%d",use_stacking,max_mut_loop_bound);
     }
     /* add by yangke end */
 
@@ -6649,14 +6903,15 @@ havoc_stage:
 
       /* add by yangke start */
       u32 arg[2];//to store opcode and pos
-      if(mut_prior_mode){
+      //if(mut_prior_mode){
+      if(cycles_wo_finds >=threshold_cycles_wo_finds){
     	 dispatch_random(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0),arg);
+    	 record_mutation(arg[0]);
       }else{
     	 arg[0]=UR(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0));//original AFLGO setting
     	 arg[1]=-1;// be careful when it is used as the initial value is invalid pos -1
       }
       /* add by yangke end */
-
 
       switch (arg[0]) {
 
@@ -6667,8 +6922,8 @@ havoc_stage:
     	  if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len<<3)){
     		  arg[1]=UR(temp_len << 3);
     	  }//else{arg[1]= (arg[1]>>3)+UR(8));}
-    	  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
-    	      record_mutation(0,arg[1]>>3);
+    	  if (cycles_wo_finds >=threshold_cycles_wo_finds){
+    		  record_possible_value_changing_mutation(0,arg[1]>>3);
     	  }
 
     	  FLIP_BIT(out_buf,arg[1]);//be careful of heap overflow
@@ -6686,8 +6941,8 @@ havoc_stage:
           if (!mut_prior_mode||arg[1]==-1||arg[1]>=temp_len){
         	  arg[1]=UR(temp_len);
 		  }
-          if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
-              record_mutation(1,arg[1]);
+          if (cycles_wo_finds >=threshold_cycles_wo_finds){
+        	  record_possible_value_changing_mutation(1,arg[1]);
           }
 
           out_buf[arg[1]] = interesting_8[UR(sizeof(interesting_8))];
@@ -6707,10 +6962,9 @@ havoc_stage:
           if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len-1)){
         	  arg[1]=UR(temp_len - 1);
           }
-          if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
-              record_mutation(2,arg[1]);
+          if (cycles_wo_finds >=threshold_cycles_wo_finds){
+        	  record_possible_value_changing_mutation(2,arg[1]);
           }
-
 
           if (UR(2)) {
 
@@ -6739,8 +6993,8 @@ havoc_stage:
           if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len-3)){
               arg[1]=UR(temp_len - 3);
           }
-          if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
-        	  record_mutation(3,arg[1]);
+          if (cycles_wo_finds >=threshold_cycles_wo_finds){
+        	  record_possible_value_changing_mutation(3,arg[1]);
           }
 
           if (UR(2)) {
@@ -6766,8 +7020,8 @@ havoc_stage:
           if (!mut_prior_mode||arg[1]==-1||arg[1]>=temp_len){
 			  arg[1]=UR(temp_len);
 		  }
-		  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
-			  record_mutation(4,arg[1]);
+		  if (cycles_wo_finds >=threshold_cycles_wo_finds){
+			  record_possible_value_changing_mutation(4,arg[1]);
 		  }
 
           out_buf[arg[1]] -= 1 + UR(ARITH_MAX);
@@ -6782,9 +7036,10 @@ havoc_stage:
           if (!mut_prior_mode||arg[1]==-1||arg[1]>=temp_len){
 			  arg[1]=UR(temp_len);
 		  }
-		  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
-			  record_mutation(5,arg[1]);
+		  if (cycles_wo_finds >=threshold_cycles_wo_finds){
+			  record_possible_value_changing_mutation(5,arg[1]);
 		  }
+
           out_buf[arg[1]] += 1 + UR(ARITH_MAX);
           /* add by yangke end */
           break;
@@ -6798,8 +7053,8 @@ havoc_stage:
           if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len-1)){
 			  arg[1]=UR(temp_len-1);
 		  }
-		  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
-			  record_mutation(6,arg[1]);
+		  if (cycles_wo_finds >=threshold_cycles_wo_finds){
+			  record_possible_value_changing_mutation(6,arg[1]);
 		  }
 
           if (UR(2)) {
@@ -6831,8 +7086,8 @@ havoc_stage:
           if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len-1)){
 			  arg[1]=UR(temp_len-1);
 		  }
-		  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
-			  record_mutation(7,arg[1]);
+		  if (cycles_wo_finds >=threshold_cycles_wo_finds){
+			  record_possible_value_changing_mutation(7,arg[1]);
 		  }
           if (UR(2)) {
 
@@ -6863,8 +7118,8 @@ havoc_stage:
 		  if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len-3)){
 			  arg[1]=UR(temp_len - 3);
 		  }
-		  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
-			  record_mutation(8,arg[1]);
+		  if (cycles_wo_finds >=threshold_cycles_wo_finds){
+			  record_possible_value_changing_mutation(8,arg[1]);
 		  }
 
           if (UR(2)) {
@@ -6896,8 +7151,8 @@ havoc_stage:
 		  if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len-3)){
 			  arg[1]=UR(temp_len - 3);
 		  }
-		  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
-			  record_mutation(9,arg[1]);
+		  if (cycles_wo_finds >=threshold_cycles_wo_finds){
+			  record_possible_value_changing_mutation(9,arg[1]);
 		  }
           if (UR(2)) {
 
@@ -6928,8 +7183,8 @@ havoc_stage:
 		  if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len)){
 			  arg[1]=UR(temp_len);
 		  }
-		  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
-			  record_mutation(10,arg[1]);
+		  if (cycles_wo_finds >=threshold_cycles_wo_finds){
+			  record_possible_value_changing_mutation(10,arg[1]);
 		  }
           out_buf[arg[1]] ^= 1 + UR(255);
           /* add by yangke end */
@@ -6953,9 +7208,9 @@ havoc_stage:
             if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len - del_len + 1)){
             	arg[1]=UR(temp_len - del_len + 1);
 			}
-			if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
-				record_mutation(11,arg[1]);
-				record_mutation(12,arg[1]);
+			if (cycles_wo_finds >=threshold_cycles_wo_finds){
+				record_possible_value_changing_mutation(11,arg[1]);
+				record_possible_value_changing_mutation(12,arg[1]);
 			}
 
             del_from = arg[1];
@@ -6996,8 +7251,8 @@ havoc_stage:
             if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len)){
                 arg[1]=UR(temp_len);
             }
-            if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
-                record_mutation(13,arg[1]);
+            if (cycles_wo_finds >=threshold_cycles_wo_finds){
+                record_possible_value_changing_mutation(13,arg[1]);
             }
             clone_to   = arg[1];
             /* add by yangke end */
@@ -7045,8 +7300,8 @@ havoc_stage:
 			if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len - copy_len + 1)){
 				arg[1]=UR(temp_len - copy_len + 1);
 			}
-			if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
-				record_mutation(14,arg[1]);
+			if (cycles_wo_finds >=threshold_cycles_wo_finds){
+				record_possible_value_changing_mutation(14,arg[1]);
 			}
             copy_to   = arg[1];
             /* add by yangke end */
@@ -7084,8 +7339,8 @@ havoc_stage:
 			  if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len - extra_len + 1)){
 				  arg[1]=UR(temp_len - extra_len + 1);
 			  }
-			  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
-			  	  record_mutation(15,arg[1]);
+			  if (cycles_wo_finds >=threshold_cycles_wo_finds){
+			  	  record_possible_value_changing_mutation(15,arg[1]);
 			  }
               insert_at = arg[1];
               /* add by yangke end */
@@ -7105,8 +7360,8 @@ havoc_stage:
 			  if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len - extra_len + 1)){
 				  arg[1]=UR(temp_len - extra_len + 1);
 			  }
-			  if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
-				  record_mutation(15,arg[1]);
+			  if (cycles_wo_finds >=threshold_cycles_wo_finds){
+				  record_possible_value_changing_mutation(15,arg[1]);
 			  }
 			  insert_at = arg[1];
               /* add by yangke end */
@@ -7123,8 +7378,8 @@ havoc_stage:
 		    if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len + 1)){
 			    arg[1]=UR(temp_len + 1);
 		    }
-		    if (cycles_wo_finds >=THRESHOLD_CYCLES_WO_FINDS){
-			    record_mutation(16,arg[1]);
+		    if (cycles_wo_finds >=threshold_cycles_wo_finds){
+			    record_possible_value_changing_mutation(16,arg[1]);
 		    }
 		    u32 use_extra, extra_len, insert_at = arg[1];
 		    /* add by yangke end */
@@ -7303,8 +7558,13 @@ retry_splicing:
     ck_free(out_buf);
     out_buf = ck_alloc_nozero(len);
     memcpy(out_buf, in_buf, len);
-
-    goto havoc_stage;
+    /* add by yangke start*/
+    /*if (cycles_wo_finds >=threshold_cycles_wo_finds){
+    	//splice_cycle+=4;
+    	splice_cycle+=stage_max/max_mut_loop_bound<SPLICE_CYCLES/2?stage_max/max_mut_loop_bound:SPLICE_CYCLES/2;
+    }*/
+    /* add by yangke end*/
+    goto havoc_stage;//original AFLGO
 
   }
 

@@ -1,9 +1,9 @@
 #!/bin/bash
-./1.download_llvm.sh
-./2.prerequisit.sh
-./3.download_compile_aflgo.sh
-./4.download_subject.sh
-./5.set_targets.sh
+#./1.download_llvm.sh
+#./2.prerequisit.sh
+#./3.download_compile_aflgo.sh
+#./4.download_subject.sh
+#./5.set_targets.sh
 ./7.get_distance-cfg.sh
 ./9.instrument_subject.sh
 ./10.construct_seed_corpus_and_fuzz.sh

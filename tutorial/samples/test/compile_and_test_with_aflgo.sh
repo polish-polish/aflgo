@@ -16,7 +16,7 @@ if [ "$TARGET" == "entry" ] ; then
 elif [ "$TARGET" == "regex" ] ; then
 	TIME=2m
 elif [ "$TARGET" == "maze" ] ; then
-	TIME=15m
+	TIME=5m
 fi
 if [ "$2" != "-" ] ; then
 	if [ ! -f ./${TARGET}.c ]; then
@@ -32,7 +32,7 @@ if [ "$2" != "-" ] ; then
 		echo "regex.c:88"> $TMP_DIR/BBtargets.txt
 	elif [ "$TARGET" == "maze" ] ; then
 		#specify the first line number of a basic block, the fuzzer cannot locate a basic block by a secord or following line number"
-		echo "maze.c:109"> $TMP_DIR/BBtargets.txt
+		echo -e "maze.c:108\nmaze.c:109"> $TMP_DIR/BBtargets.txt
 	fi
 
 	pushd $AFLGO
@@ -41,9 +41,9 @@ if [ "$2" != "-" ] ; then
 	cd $AFLGO/llvm_mode
 	make #clean all
 	popd
-	CC=$AFLGO/afl-clang-fast
-	gcc ./${TARGET}.c -o ${TARGET}
-        clang ${TARGET}.c -emit-llvm -S -c -o ${TARGET}.ll
+	CC=$AFLGO/afl-clang-fast 
+	gcc ./${TARGET}.c -g3 -o ${TARGET}
+        clang ${TARGET}.c -g3 -emit-llvm -S -c -o ${TARGET}.ll
 	$CC $ADDITIONAL $LDFLAGS  ./${TARGET}.c -o ${TARGET}_profiled
         #set -v 
 	# Clean up
@@ -89,12 +89,12 @@ if [ "$2" != "-" ] ; then
 	
         
 fi
-#gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
-:<<!
+#:<<!
 if [ "$TARGET" == "maze" ] ; then
+#gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -x $SUBJECT/maze.dict -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
 /usr/bin/time -a -o time.txt $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -x $SUBJECT/maze.dict -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
 else
+#gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
 /usr/bin/time -a -o time.txt $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
 fi
-!
-
+#!

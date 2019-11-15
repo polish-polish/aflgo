@@ -87,6 +87,7 @@ public:
 	static char ID;
 	/* add by yangke start */
 	static unsigned instrument_cnt;
+	static unsigned lattice;//Control bits of Shl operation for value to store: 0,8,16,24(4B) or 0,8,16,24,32,40,48,56(8B)
 	/* add by yangke end */
 	AFLCoverage() :
 			ModulePass(ID) {
@@ -101,6 +102,24 @@ protected:
 	void debug(Value *v,std::string info="#Value#--");
 	void bbRecord(unsigned int cur_loc, BasicBlock &BB,
 			std::ofstream &bbname_id_pairs);
+	void handleGetElementPtrInst(Value *insert_point, GetElementPtrInst * GEPI, GlobalVariable *AFLMapPtr,
+			GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
+			unsigned int cur_loc);
+	void handleLoadInst(Value *insert_point, LoadInst * LI, GlobalVariable *AFLMapPtr,
+			GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
+			unsigned int cur_loc);
+	void handleCastInst(Value *insert_point, CastInst * CI, GlobalVariable *AFLMapPtr,
+			GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
+			unsigned int cur_loc);
+	void handleICmpInst(Value *insert_point, ICmpInst * ICmp, GlobalVariable *AFLMapPtr,
+			GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
+			unsigned int cur_loc);
+	void handleFCmpInst(Value *insert_point, FCmpInst * FCmp, GlobalVariable *AFLMapPtr,
+				GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
+				unsigned int cur_loc);
+	void handleBinaryOperator(Value *insert_point, BinaryOperator * BOP, GlobalVariable *AFLMapPtr,
+			GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
+			unsigned int cur_loc);
 };
 
 }
@@ -108,6 +127,7 @@ protected:
 char AFLCoverage::ID = 0;
 /* add by yangke start */
 unsigned AFLCoverage::instrument_cnt = 0;
+unsigned AFLCoverage::lattice = 0;
 /* add by yangke end */
 void AFLCoverage::bbRecord(unsigned int cur_loc, BasicBlock &BB,
 		std::ofstream &bbname_id_pairs) {
@@ -165,11 +185,148 @@ void AFLCoverage::bbRecord(unsigned int cur_loc, BasicBlock &BB,
 	bbname_id_pairs << bb_name << "," << cur_loc << "\n";
 }
 inline void AFLCoverage::debug(Value *v,std::string info) { //contains format string vulnerability
+#ifdef DEBUG_
 	std::string var_str;
 	llvm::raw_string_ostream rso(var_str);
 	v->print(rso);
 	OKF("%s:%s", info.c_str(), var_str.c_str());
+#endif
 }
+void AFLCoverage::handleGetElementPtrInst(Value *insert_point, GetElementPtrInst * GEPI, GlobalVariable *AFLMapPtr,
+		GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
+		unsigned int cur_loc) {
+	if(GEPI->isInBounds ()&& GEPI->hasIndices()){//getNumOperands()>1
+		int num=GEPI->getNumOperands();
+		//skip 0 op(PointerOperands)
+		for(int i=1;i<num;i++){
+			Value * gep_op=GEPI->getOperand(i);
+			if(Constant * c = dyn_cast < Constant > (gep_op)){
+			}else if (gep_op->getType()->getTypeID() != Type::VoidTyID) {
+				mapValue(insert_point, gep_op, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+				if (CastInst * CI = dyn_cast < CastInst > (gep_op)){
+					debug(gep_op,"#GetElementPtr depends on indice(CastInst):#");
+					handleCastInst(insert_point, CI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+				}else if (LoadInst * LI = dyn_cast < LoadInst > (gep_op)) {
+					debug(gep_op,"#GetElementPtr depends on indice(LoadInst):#");
+					handleLoadInst(insert_point, LI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+				}
+			}
+		}
+		Value * ptr=GEPI->getPointerOperand();
+		if(Constant * c = dyn_cast < Constant > (ptr)){
+		}else if (ptr->getType()->getTypeID() != Type::VoidTyID) {
+			mapValue(insert_point, ptr, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+			if (GetElementPtrInst * GEPI2 = dyn_cast < GetElementPtrInst > (ptr)){
+				debug(GEPI2,"#GetElementPtr depends on Pointer(GetElementPtr)#");
+				handleGetElementPtrInst(insert_point, GEPI2, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+			}else if (CastInst * CI = dyn_cast < CastInst > (ptr)){
+				debug(ptr,"#GetElementPtr depends on Pointer(CastInst):#");
+				handleCastInst(insert_point, CI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+			}else if (LoadInst * LI = dyn_cast < LoadInst > (ptr)) {
+				debug(ptr,"#GetElementPtr depends on Pointer(LoadInst):#");
+				handleLoadInst(insert_point, LI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+			}
+		}
+
+	}
+}
+void AFLCoverage::handleLoadInst(Value *insert_point, LoadInst * LI, GlobalVariable *AFLMapPtr,
+		GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
+		unsigned int cur_loc) {
+	Value * load_address= LI->getPointerOperand();
+	if(Constant * c = dyn_cast < Constant > (load_address)){
+	}else{
+		mapValue(insert_point, load_address, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+		if (GetElementPtrInst * GEPI = dyn_cast < GetElementPtrInst > (load_address)){
+			debug(GEPI,"#LoadInst depends on GetElementPtr#");
+			handleGetElementPtrInst(insert_point, GEPI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+		}else if (AllocaInst * AI = dyn_cast < AllocaInst > (load_address)){
+			//ignore AllocaInst
+		}else{
+			debug(load_address,"Unknown load_address:");
+		}
+	}
+}
+void AFLCoverage::handleCastInst(Value *insert_point, CastInst * CI, GlobalVariable *AFLMapPtr,
+		GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
+		unsigned int cur_loc) {
+	Value * cast_source= CI->getOperand(0);
+	if(Constant * c = dyn_cast < Constant > (cast_source)){
+	}else{
+		mapValue(insert_point, cast_source, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+		if (LoadInst * LI = dyn_cast < LoadInst > (cast_source)) {
+			debug(LI,"#CastInst depends on LoadInst#");
+			handleLoadInst(insert_point, LI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+		}
+	}
+}
+void AFLCoverage::handleFCmpInst(Value *insert_point, FCmpInst * FCmp, GlobalVariable *AFLMapPtr,
+		GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
+		unsigned int cur_loc) {
+	//TODO map float variable
+	//Value * op0 = FCmp->getOperand(0);
+	//Value * op1 = FCmp->getOperand(1);
+
+}
+void AFLCoverage::handleICmpInst(Value *insert_point, ICmpInst * ICmp, GlobalVariable *AFLMapPtr,
+		GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
+		unsigned int cur_loc) {
+	Value * op0 = ICmp->getOperand(0);
+	Value * op1 = ICmp->getOperand(1);
+	if(Constant * consop0 = dyn_cast < Constant > (op0)){
+	}else if (op0->getType()->getTypeID() != Type::VoidTyID) {
+		mapValue(insert_point, op0, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+		if (CastInst * CI = dyn_cast < CastInst > (op0)) {
+			debug(CI,"#[OP0] of ICmpInst is a CastInst#");
+			handleCastInst(insert_point, CI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+		}else if(LoadInst * LI = dyn_cast < LoadInst > (op0)) {
+			debug(LI,"#[OP0] of ICmpInst is a LoadInst#");
+			handleLoadInst(insert_point, LI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+		}
+	}
+	if(Constant * consop1 = dyn_cast < Constant > (op1)){
+	}else if (op1->getType()->getTypeID() != Type::VoidTyID) {
+		mapValue(insert_point, op1, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+		if (CastInst * CI = dyn_cast < CastInst > (op1)) {
+			debug(CI,"#[OP1] of ICmpInst is a CastInst#");
+			handleCastInst(insert_point, CI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+		}else if(LoadInst * LI = dyn_cast < LoadInst > (op1)) {
+			debug(LI,"#[OP1] of ICmpInst is a LoadInst#");
+			handleLoadInst(insert_point, LI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+		}
+	}
+}
+void AFLCoverage::handleBinaryOperator(Value *insert_point, BinaryOperator * BOP, GlobalVariable *AFLMapPtr,
+		GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
+		unsigned int cur_loc) {
+	Value * op0 = BOP->getOperand(0);
+	Value * op1 = BOP->getOperand(1);
+	if(Constant * consop0 = dyn_cast < Constant > (op0)){
+	}else if (op0->getType()->getTypeID() != Type::VoidTyID) {
+		mapValue(insert_point, op0, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+		if (ICmpInst * icmp0 = dyn_cast < ICmpInst > (op0)) {
+			debug(icmp0,"#[OP0] of BinaryOperator is a ICmpInst#");
+			handleICmpInst(insert_point, icmp0, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+		}else if(LoadInst * LI = dyn_cast < LoadInst > (op0)) {
+			debug(LI,"#[OP0] of ICmpInst is a LoadInst#");
+			handleLoadInst(insert_point, LI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+		}
+	}
+	if(Constant * consop1 = dyn_cast < Constant > (op1)){
+	}else if (op1->getType()->getTypeID() != Type::VoidTyID) {
+		mapValue(insert_point, op1, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+		if (ICmpInst * icmp1 = dyn_cast < ICmpInst > (op1)) {
+			debug(icmp1,"#[OP1] of BinaryOperator is a ICmpInst#");
+			handleICmpInst(insert_point, icmp1, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+		}else if(LoadInst * LI = dyn_cast < LoadInst > (op1)) {
+			debug(LI,"#[OP1] of ICmpInst is a LoadInst#");
+			handleLoadInst(insert_point, LI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+		}
+	}
+}
+
+
+
 //size_t AFLCoverage::hashName(Value *v) {
 //	std::string var_str;
 //	llvm::raw_string_ostream rso(var_str);
@@ -194,14 +351,14 @@ void AFLCoverage::mapValue(Value *insert_point, Value *v, GlobalVariable *AFLMap
 	IntegerType *Int64Ty = IntegerType::getInt64Ty(C);
 	BasicBlock::iterator IP = BB.getFirstInsertionPt();
 	BasicBlock::iterator InsertIP=IP;
-    debug(v,"Value to store");
+    ///debug(v,"Value to store");
     for(int i=0;IP!= BB.end();IP++,i++)
 	{
-		std::string info_str;
-		llvm::raw_string_ostream rso(info_str);
-		rso<<"BBInst["<<i<<"]";
-		debug(&(*IP),rso.str());
-		if (&(*IP) == insert_point) {
+		///std::string info_str;
+		///llvm::raw_string_ostream rso(info_str);
+		///rso<<"BBInst["<<i<<"]";
+		///debug(&(*IP),rso.str());
+		if (&(*IP) == insert_point){
 			InsertIP = IP;
 			break;
 		}
@@ -212,7 +369,7 @@ void AFLCoverage::mapValue(Value *insert_point, Value *v, GlobalVariable *AFLMap
 
 	LoadInst *MapPtr = IRB.CreateLoad(AFLMapPtr);
 	MapPtr->setMetadata(M.getMDKindID("nosanitize"),MDNode::get(C, None));
-	debug(MapPtr,"MapPtr\t");
+	///debug(MapPtr,"MapPtr\t");
         
 #ifdef __x86_64__
 	IntegerType *LargestType = Int64Ty;
@@ -222,8 +379,10 @@ void AFLCoverage::mapValue(Value *insert_point, Value *v, GlobalVariable *AFLMap
 	ConstantInt *Offset = ConstantInt::get(LargestType, MAP_SIZE +16+(cur_loc<<2));
 #endif
 	
-	Value *MapValuePtr = IRB.CreateGEP(MapPtr, Offset);
-	debug(MapValuePtr,"MapValuePtr\t");
+	Value *_MapValuePtr = IRB.CreateGEP(MapPtr, Offset);
+	ConstantInt *Zero=ConstantInt::get(LargestType, 0);
+	Value *MapValuePtr = IRB.CreateGEP(LargestType, _MapValuePtr, Zero);
+	///debug(MapValuePtr,"MapValuePtr\t");
 
 #ifdef LLVM_OLD_DEBUG_API
 	LoadInst * pre_v = IRB.CreateLoad(MapValuePtr);
@@ -232,14 +391,24 @@ void AFLCoverage::mapValue(Value *insert_point, Value *v, GlobalVariable *AFLMap
 	LoadInst * pre_v = IRB.CreateLoad(LargestType,MapValuePtr);
 #endif
 	pre_v->setMetadata(M.getMDKindID("nosanitize"),MDNode::get(C, None));    
-	debug(pre_v,"pre_v\t");
+	///debug(pre_v,"pre_v\t");
+	Value * casted_v=IRB.CreateZExt(v,LargestType);
+	///debug(casted_v,"casted_v\t");
+	Value * shled_v=IRB.CreateShl(casted_v,lattice);
+	///debug(shled_v,"shled_v\t");
+	Value * new_v = IRB.CreateXor(shled_v, pre_v);
+	///debug(new_v,"new_v\t");
 
-	Value * new_v = IRB.CreateXor(IRB.CreateSExt(v,LargestType), pre_v); 
-	debug(new_v,"new_v\t");
-        
+#ifdef __x86_64__
+	lattice=(lattice+8)%64;
+#else
+	lattice=(lattice+8)%32;
+#endif
+
+
 	StoreInst *myStore = IRB.CreateStore(new_v, MapValuePtr);
 	myStore->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-        debug(myStore,"myStore\t");
+    ///debug(myStore,"myStore\t");
 
 }
 bool AFLCoverage::runOnModule(Module &M) {
@@ -274,10 +443,8 @@ bool AFLCoverage::runOnModule(Module &M) {
 	} else if (!DistanceFile.empty()) {
 		if (OutDirectory.empty()) {
 			FATAL("Provide output directory '-outdir <directory>'");
-			FATAL(
-					"We need to out put <BBname,RandomID> pairs into <directory>/bbname_rid_pairs.txt");
-			FATAL(
-					"TIP:<BBname>::=<filename>:<linenum>  e.g 'entry.c:45,1804289383'");
+			FATAL("We need to out put <BBname,RandomID> pairs into <directory>/bbname_rid_pairs.txt");
+			FATAL("TIP:<BBname>::=<filename>:<linenum>  e.g 'entry.c:45,1804289383'");
 			return false;
 		}
 		std::ifstream cf(DistanceFile.c_str());
@@ -679,7 +846,6 @@ bool AFLCoverage::runOnModule(Module &M) {
 				unsigned int cur_loc = AFL_R(MAP_SIZE);
 
 				//original aflgo instrumentation break
-
 				/*add by yangke start*/
 				if (!OutDirectory.empty())
 					bbRecord(cur_loc, BB, bbname_id_pairs);
@@ -689,171 +855,38 @@ bool AFLCoverage::runOnModule(Module &M) {
                 if (distance < 0 && AFL_R(4) < 1) //monitor with probability 1/4 if static analysis said that it's not reachable.
                 	continue;
 				TerminatorInst *TI = BB.getTerminator();
-				OKF("add by yangke.");
+				///OKF("add by yangke.");
 				std::string alert_info;
 				llvm::raw_string_ostream rso(alert_info);
 				TI->print(rso);
-				OKF("#TerminatorInst#:%s", alert_info.c_str());
+				//lattice=0;//reset lattice shl param of value to store for new BB instrumentation
+				///OKF("#TerminatorInst#:%s", alert_info.c_str());
 				if (BranchInst * BI = dyn_cast < BranchInst > (TI)) {
 					if (BI->isConditional()) {
-
-						Value * v = BI->getCondition();
-						alert_info = "";
-						v->print(rso);
-						OKF("#Condition Value#:%s", alert_info.c_str());
-						if (ICmpInst * icmp = dyn_cast < ICmpInst > (v)) {
-							OKF("#Condition Value is a ICmpInst#");
-							Value * op0 = icmp->getOperand(0);
-							Value * op1 = icmp->getOperand(1);
-							ConstantInt * consop0 = dyn_cast < ConstantInt
-									> (op0);
-							if (!consop0
-									&& op0->getType()->getTypeID()
-											!= Type::VoidTyID) {
-								mapValue(icmp, op0, AFLMapPtr, AFLPrevLoc, BB,
-										M, cur_loc);
-								OKF(
-										"Instrument[%d] With Condition:ICmpInst OK!\n",
-										instrument_cnt++);
-							}
-							ConstantInt * consop1 = dyn_cast < ConstantInt
-									> (op1);
-							if (!consop1
-									&& op1->getType()->getTypeID()
-											!= Type::VoidTyID) {
-								mapValue(icmp, op1, AFLMapPtr, AFLPrevLoc, BB,
-										M, cur_loc);
-								OKF(
-										"Instrument[%d] With Condition:ICmpInst OK!\n",
-										instrument_cnt++);
-							}
-						} else if (BinaryOperator * BOP = dyn_cast
-								< BinaryOperator > (v)) {
-							OKF("#Condition Value is a BinaryOperator#");
-							Value * op0 = BOP->getOperand(0);
-
-							if (ICmpInst * icmp0 = dyn_cast < ICmpInst
-									> (op0)) {
-								alert_info = "";
-								icmp0->print(rso);
-								OKF(
-										"-#[OP0] of this BinaryOperator is a IcmpInst#:%s",
-										alert_info.c_str());
-								Value * op00 = icmp0->getOperand(0);
-
-								if (ConstantInt * cnst = dyn_cast < ConstantInt
-										> (op00)) {
-								} else if (op00->getType()->getTypeID()
-										!= Type::VoidTyID) {
-									alert_info = "";
-									op00->print(rso);
-									OKF("--#Find a variable op01#:%s",
-											alert_info.c_str());
-									/* begin instrumentation */
-									mapValue(icmp0, op00, AFLMapPtr, AFLPrevLoc,
-											BB, M, cur_loc);
-									OKF(
-											"--Instrument[%d] With Condition:BinaryOperator OK!\n",
-											instrument_cnt++);
-									/* end instrumentation */
-
-								}
-								Value * op01 = icmp0->getOperand(1);
-								if (ConstantInt * cnst = dyn_cast < ConstantInt
-										> (op01)) {
-								} else if (op01->getType()->getTypeID()
-										!= Type::VoidTyID) {
-									alert_info = "";
-									op01->print(rso);
-									OKF("--#Find a variable op01#:%s",
-											alert_info.c_str());
-									/* begin instrumentation */
-									mapValue(icmp0, op01, AFLMapPtr, AFLPrevLoc,
-											BB, M, cur_loc);
-									OKF(
-											"--Instrument[%d] With Condition:BinaryOperator OK!\n",
-											instrument_cnt++);
-									/* end instrumentation */
-								}
-
-							}
-							Value * op1 = BOP->getOperand(1);
-
-							if (ICmpInst * icmp1 = dyn_cast < ICmpInst
-									> (op1)) {
-								alert_info = "";
-								icmp1->print(rso);
-								OKF(
-										"-#[OP1] of this BinaryOperator is a IcmpInst#:%s",
-										alert_info.c_str());
-								Value * op10 = icmp1->getOperand(0);
-
-								if (ConstantInt * cnst = dyn_cast < ConstantInt
-										> (op10)) {
-								} else if (op10->getType()->getTypeID()
-										!= Type::VoidTyID) {
-									alert_info = "";
-									op10->print(rso);
-									OKF("--#Find a variable op10#:%s",
-											alert_info.c_str());
-									/* begin instrumentation */
-									mapValue(icmp1, op10, AFLMapPtr, AFLPrevLoc,
-											BB, M, cur_loc);
-									OKF(
-											"--Instrument[%d] With Condition:BinaryOperator OK!\n",
-											instrument_cnt++);
-									/* end instrumentation */
-
-								}
-								Value * op11 = icmp1->getOperand(1);
-								if (ConstantInt * cnst = dyn_cast < ConstantInt
-										> (op11)) {
-								} else if (op11->getType()->getTypeID()
-										!= Type::VoidTyID) {
-									alert_info = "";
-									op11->print(rso);
-									OKF("--#Find a variable op11#:%s",
-											alert_info.c_str());
-									/* begin instrumentation */
-									mapValue(icmp1, op11, AFLMapPtr, AFLPrevLoc,
-											BB, M, cur_loc);
-									OKF(
-											"--Instrument[%d] With Condition:BinaryOperator OK!\n",
-											instrument_cnt++);
-									/* end instrumentation */
-								}
-
-							}
-
+						Value * cond = BI->getCondition();
+						if (ICmpInst * icmp = dyn_cast < ICmpInst > (cond)) {
+							debug(icmp,"#Condition Value is a ICmpInst#");
+							handleICmpInst(cond, icmp, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+							OKF("Instrument[%d] With Condition:ICmpInst OK!\n",instrument_cnt++);
+						} else if (FCmpInst * fcmp = dyn_cast < FCmpInst > (cond)) {
+							debug(fcmp,"#FCompInst#");
+							////FATAL("TODO:Check and fix it!");
+							handleFCmpInst(cond, fcmp, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+						} else if (BinaryOperator * BOP = dyn_cast < BinaryOperator > (cond)) {
+							debug(BOP,"#Condition Value is a BinaryOperator#");
+							handleBinaryOperator(cond, BOP, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+							OKF("--Instrument[%d] With Condition:BinaryOperator OK!\n",instrument_cnt++);
 						}
-//				int cnt=0;
-//        		for (auto * op = BI->op_begin(); op != BI->op_end(); op++,cnt++) {
-//        		  Value* v = op->get();
-//        		  errs()<<"op"<<cnt<<":\n";
-//        		  v->print(errs());
-//        		  errs()<<".";
-//        		  //StringRef name = v->getName();
-//        		  //errs()<<name<<"\n";
-//        		}
 					}
 				}else if (SwitchInst * SI = dyn_cast < SwitchInst > (TI)) {
 					Value * cond = SI->getCondition();
-					debug(cond,"#Condition Value#");
 					if (CastInst * CI = dyn_cast < CastInst > (cond)) {
-						Value * cast_source= CI->getOperand(0);
-
-						debug(cast_source,"#Condition Value depends on CastInst#");
-						mapValue(cond, cast_source, AFLMapPtr, AFLPrevLoc, BB,M, cur_loc);
-						if (LoadInst * LI = dyn_cast < LoadInst > (cast_source)) {
-							Value * load_address= LI->getOperand(0);
-							debug(load_address,"#CastInst depends on LoadInst#");
-							mapValue(cond, load_address, AFLMapPtr, AFLPrevLoc, BB,M, cur_loc);
-						}
+						debug(CI,"#Condition Value depends on CastInst#");
+						handleCastInst(cond, CI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
 						OKF("Instrument[%d] With Condition:CastInst in SwitchInst OK!\n",instrument_cnt++);
-					}else if (LoadInst * LI = dyn_cast < LoadInst > (TI)) {
-						Value * load_address= LI->getOperand(0);
-						debug(load_address,"#Condition Value depends on LoadInst#");
-						mapValue(cond, load_address, AFLMapPtr, AFLPrevLoc, BB,M, cur_loc);
+					}else if (LoadInst * LI = dyn_cast < LoadInst > (cond)) {
+						debug(LI,"#Condition Value depends on LoadInst#");
+						handleLoadInst(cond, LI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
 						OKF("Instrument[%d] With Condition:LoadInst in SwitchInst OK!\n",instrument_cnt++);
 					}
 
@@ -862,7 +895,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 					for(SwitchInst::CaseIt it=SI->case_begin();it!=SI->case_end();it++,num++)
 					{
 
-						OKF("#NUM#:%d",num);
+						///OKF("#NUM#:%d",num);
 						ConstantInt * value=it.getCaseValue();
 						int64_t x=value->getSExtValue();
 						debug(value,"#Case Value#");

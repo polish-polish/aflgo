@@ -9,7 +9,7 @@ export SUBJECT=$PWD/libxml2
 
 sudo apt-get install gawk
 # Download commit-analysis tool
-wget https://raw.githubusercontent.com/jay/showlinenum/develop/showlinenum.awk
+#wget https://raw.githubusercontent.com/jay/showlinenum/develop/showlinenum.awk
 chmod +x showlinenum.awk
 mv showlinenum.awk $TMP_DIR
 

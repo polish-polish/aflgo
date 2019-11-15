@@ -43,7 +43,6 @@ void draw ()
         printf ("\n");
 }
  
- 
 /**
   * The main function
   */
@@ -106,7 +105,6 @@ main (int argc, char *argv[])
           //If hit the price, You Win!!            
                   if (maze[y][x] == '#')
                     {
-			    printf("Target Line!");
                             printf ("You win!\n");
                             printf ("Your solution <%42s>\n",program);
                             abort();

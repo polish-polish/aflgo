@@ -1,7 +1,8 @@
 #!/bin/bash
 pushd `pwd`
-TEST_SUITE_DIR=/home/yangke/Program/AFL/aflgo/fuzzer-test-suite
-DOWNLOAD_DIR=/home/yangke/Program/AFL/aflgo/build_good_libpng-1.2.56
+WORK=`pwd`
+TEST_SUITE_DIR=$WORK/fuzzer-test-suite
+DOWNLOAD_DIR=$WORK/build_good_libpng-1.2.56
 if [ ! -d $DOWNLOAD_DIR ]; then
 mkdir $DOWNLOAD_DIR
 fi 

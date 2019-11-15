@@ -21,6 +21,10 @@ def get_margin_node_rids(networkID2rid,GG):
                 ret.apend(networkID2rid[n])
     return ret
 def merge_all_cfg(file_dir):
+    f=open(args.dot_path+'/../distance.callgraph.txt', "r")
+    lines=f.readlines();
+    valid_fnames=set(map(lambda x: x.split(",")[0], lines))
+
     GG = nx.DiGraph()
     print "Init empty Graph",nx.info(GG)
     for root, dirs, files in os.walk(file_dir):
@@ -29,10 +33,11 @@ def merge_all_cfg(file_dir):
             if array[0]=="cfg" and array[-1]=="dot" :
                 if array[-2]=="bigger" and array[-3]=="dot":
                     continue
-                print "\nParsing %s .." % file 
-                G = nx.DiGraph(nx.drawing.nx_pydot.read_dot (file_dir+"/"+file))
-                print nx.info (G)
-                GG=nx.compose(GG,G)#GG=nx.union(GG,G,rename=('GG-','G-'))
+		if array[1] in valid_fnames:
+                    print "\nParsing %s .." % file 
+                    G = nx.DiGraph(nx.drawing.nx_pydot.read_dot (file_dir+"/"+file))
+                    print nx.info (G)
+                    GG=nx.compose(GG,G)#GG=nx.union(GG,G,rename=('GG-','G-'))
     print nx.info(GG)
     return GG
 def getNameFromLabel(n,GG):
@@ -75,6 +80,7 @@ if __name__ == '__main__':
   f.close()
   indexes=[]
   for line in lines:
+      if(len(line.split(","))!=2):continue
       bb_name,rid=line.split(",")
       rid=rid.strip()
       bbname2rid[bb_name]=rid
