@@ -321,7 +321,7 @@ static int margin_bb_count=0;
 
 
 
-#define MAX_MUT_POS (1<<12) //4KB
+#define MAX_MUT_POS (256) //4KB
 #define MUT_NUM 17
 static int mut[MUT_NUM][MAX_MUT_POS];//e.g. mut[0][2] mut times of BIT_FLIP(opcode is 0,see afl-fuzz.c:6566) at byte with offset 2 of the input
 static int mut_cnt[MUT_NUM];//mutation times of a each kind of mution (for value effective filtration).
@@ -339,7 +339,7 @@ static unsigned monitor_win=0;
 static unsigned total_mut_cnt=0;//total mutation opteration times
 static unsigned total_monitored_mut_cnt=0;//we only monitored some of the mutaions
 //so this means times that we current used for mutation proiritization
-#define  INIT_THRESHOLD_CYCLES_WO_FINDS 2//threshold for opening mutation prior mode when startup.
+#define  INIT_THRESHOLD_CYCLES_WO_FINDS 0//threshold for opening mutation prior mode when startup.
 #define INIT_MUT_LOOP_BOUND 2 //inital mutation loop bound when searching for good mutation.
 #define MAX_MUT_LOOP_BOUND 4 //max mutation loop bound when searching for good mutation.
 #define DELTA 10;
@@ -3563,7 +3563,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 			  //because if we still need to clean up if we don't find new var bits
 			  //So clean up in the beginning of one_fuzz().
 			  if(!mut_prior_mode){
-				  OKF("Switch to mut_prior_mode!");
+				  //OKF("Switch to mut_prior_mode!");
 				  mut_prior_mode=1;
 			  }
 			  /*t2=cycles_wo_finds;
@@ -3595,14 +3595,27 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     else{//new coverage findings
     	////examin mutations that contribute to this new coverage
     	if (cycles_wo_finds >=threshold_cycles_wo_finds){
-    		//record_value_changing_mutation();
     		for(int i=0;i<MUT_NUM;i++)
 			{
 				if(one_fuzz_mut_cnt[i]>0){
 					mut_score[i]+=1;//one_fuzz_mut_cnt[i];
 				}
-				OKF("%02d,%d|%d|[%d]%s",i,mut_score[i],mut_cnt[i],tmp_mut_cnt[i],get_description(i));
+				//OKF("%02d,%d|%d|[%d]%s",i,mut_score[i],mut_cnt[i],tmp_mut_cnt[i],get_description(i));
 			}
+    		OKF("pos statistics:");
+    		for(int j=0;j<MAX_MUT_POS;j++){
+    			int cnt=0;
+    			for(int i=0;i<MUT_NUM;i++)
+    			{
+    				if(mut[i][j]>0){
+    					cnt+=mut[i][j];
+    				}
+    			}
+    			if(cnt>0){
+    				OKF("%03d-[%d",j,cnt);
+    			}
+			}
+    		//record_value_changing_mutation();
     		int randwin=0;
     		if(mut_prior_mode){
     			monitor_win++;
@@ -3614,11 +3627,11 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     			stride=stride<INITIAL_STRIDE?INITIAL_STRIDE:stride;
     			randwin=1;
     		}
-    		OKF("mon/rand mut_times:%d|%d,%0.2f,win_times,%d|%d",monitor_mut,random_mut,(float)monitor_mut/(float)random_mut,monitor_win,random_win);
-    		if (mut_prior_mode){
-    			OKF("Switch back to AFLGO normal mode!");
+    		//OKF("mon/rand mut_times:%d|%d,%0.2f,win_times,%d|%d",monitor_mut,random_mut,(float)monitor_mut/(float)random_mut,monitor_win,random_win);
+    		/*if (mut_prior_mode){
+    			//OKF("Switch back to AFLGO normal mode!");
     			mut_prior_mode=0;
-    		}
+    		}*/
     		if(randwin){
     			threshold_cycles_wo_finds+=INIT_THRESHOLD_CYCLES_WO_FINDS;//bonus
     		}else{
@@ -3626,8 +3639,8 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     		}
     		max_mut_loop_bound=INIT_MUT_LOOP_BOUND;
     		//t1=t2=t3=0;
-    		cleanup_value_changing_mutation_record();
-    		memset(virgin_var_bits, 255, MAP_SIZE<<3);
+    		//cleanup_value_changing_mutation_record();
+    		//memset(virgin_var_bits, 255, MAP_SIZE<<3);
     		//cleanup_possible_value_changing_mutation_record();//useless,just for complete clear
 
     	}
@@ -5626,17 +5639,17 @@ static inline void dispatch_random(u32 range,u32 * arg)
 	int valid_mut_cnt=0;
 	int sum=0;
 	if (mut_prior_mode){
-		for(int i=0;i<MUT_NUM;i++)
+		for(int i=15;i<MUT_NUM;i++)
 		{
-			if (mut_cnt[i]>0)
+			if (mut_cnt[i]>0 && i<15)
 			{
 				valid_mut[valid_mut_cnt]=i;//mut code
-				if(i<11||i==15)
-				{
-					sum+=4*mut_cnt[i];
-				}else if(i<11||i==15){
-					sum+=mut_cnt[i];
-				}
+				sum+=mut_cnt[i];
+				bound_values[valid_mut_cnt]=sum;//bounds which refer to index possibility in x axis
+				valid_mut_cnt++;
+			}else if(i>=15) {
+				valid_mut[valid_mut_cnt]=i;//mut code
+				sum+=10;
 				bound_values[valid_mut_cnt]=sum;//bounds which refer to index possibility in x axis
 				valid_mut_cnt++;
 			}
@@ -5655,7 +5668,7 @@ static inline void dispatch_random(u32 range,u32 * arg)
 				valid_pos[valid_pos_cnt++]=i;
 			}
 		}
-		if(rand<60){
+		if(rand<60 && valid_pos_cnt>0){
 			arg[1]=valid_pos[UR(valid_pos_cnt)];
 			switch (arg[0]){
 			case 0:
@@ -5663,22 +5676,22 @@ static inline void dispatch_random(u32 range,u32 * arg)
 				break;
 			default:
 				;
-			}/*
+			}
 			if(rand>40){
 				arg[1]=arg[1]==MAX_MUT_POS-1?arg[1]:arg[1]+1;
-			}else if(rand>40){
+			}/*else if(rand>40){
 				arg[1]=arg[1]==0?0:arg[1]-1;
 			}*/
 		}else{
 			arg[1]=-1;
-		}
+		}/*
 		if(1<=arg[0] && arg[0]<4){
 			arg[0]=rand%4;
 		}else if(4<=arg[0] && arg[0]<10){
 			arg[0]=4+rand%6;
 		}else if(15==arg[0]||16==arg[0]){
 			arg[0]=15+rand%2;
-		}
+		}*/
 		monitor_mut++;
     }/*else if (cycles_wo_finds >=threshold_cycles_wo_finds && rand<RANDOM_BOUND){//10%
 
