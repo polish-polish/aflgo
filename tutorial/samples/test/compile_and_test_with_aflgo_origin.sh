@@ -31,7 +31,7 @@ if [ "$2" != "-" ] ; then
 	elif [ "$TARGET" == "regex" ] ; then
 		echo "regex.c:88"> $TMP_DIR/BBtargets.txt
 	elif [ "$TARGET" == "maze" ] ; then
-		echo "maze.c:109"> $TMP_DIR/BBtargets.txt
+		echo -e "maze.c:108\nmaze.c:109"> $TMP_DIR/BBtargets.txt
 	fi
 	pushd $AFLGO
 	#make clean all
@@ -63,9 +63,6 @@ if [ "$2" != "-" ] ; then
 	CXXFLAGS="-distance=$TMP_DIR/distance.cfg.txt -outdir=$TMP_DIR"
 
 	$CC $CFLAGS  ./${TARGET}.c -o ${TARGET}_profiled
-
-	$AFLGO/scripts/index_all_cfg_edges.py -d $TMP_DIR/dot-files
-        ./vis-dot.sh $TMP_DIR/dot-files
 
 	# Construct seed corpus
 	if [ ! -d $DIR_IN ] ;then

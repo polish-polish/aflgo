@@ -3602,7 +3602,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 				}
 				//OKF("%02d,%d|%d|[%d]%s",i,mut_score[i],mut_cnt[i],tmp_mut_cnt[i],get_description(i));
 			}
-    		OKF("pos statistics:");
+    		OKF("#######   MUTPOS statistics:");
     		for(int j=0;j<MAX_MUT_POS;j++){
     			int cnt=0;
     			for(int i=0;i<MUT_NUM;i++)
@@ -3639,7 +3639,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     		}
     		max_mut_loop_bound=INIT_MUT_LOOP_BOUND;
     		//t1=t2=t3=0;
-    		//cleanup_value_changing_mutation_record();
+    		cleanup_value_changing_mutation_record();
     		//memset(virgin_var_bits, 255, MAP_SIZE<<3);
     		//cleanup_possible_value_changing_mutation_record();//useless,just for complete clear
 
@@ -5639,20 +5639,20 @@ static inline void dispatch_random(u32 range,u32 * arg)
 	int valid_mut_cnt=0;
 	int sum=0;
 	if (mut_prior_mode){
-		for(int i=15;i<MUT_NUM;i++)
+		for(int i=1;i<MUT_NUM;i++)
 		{
-			if (mut_cnt[i]>0 && i<15)
+			if (mut_cnt[i]>0) //&& i<15)
 			{
 				valid_mut[valid_mut_cnt]=i;//mut code
 				sum+=mut_cnt[i];
 				bound_values[valid_mut_cnt]=sum;//bounds which refer to index possibility in x axis
 				valid_mut_cnt++;
-			}else if(i>=15) {
+			}/*else if(i>=15) {
 				valid_mut[valid_mut_cnt]=i;//mut code
 				sum+=10;
 				bound_values[valid_mut_cnt]=sum;//bounds which refer to index possibility in x axis
 				valid_mut_cnt++;
-			}
+			}*/
 		}
 	}
     int rand=UR(100);
@@ -5677,9 +5677,9 @@ static inline void dispatch_random(u32 range,u32 * arg)
 			default:
 				;
 			}
-			if(rand>40){
+			/*if(rand>40){
 				arg[1]=arg[1]==MAX_MUT_POS-1?arg[1]:arg[1]+1;
-			}/*else if(rand>40){
+			}else if(rand>40){
 				arg[1]=arg[1]==0?0:arg[1]-1;
 			}*/
 		}else{

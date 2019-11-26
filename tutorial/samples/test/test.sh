@@ -41,7 +41,7 @@ fi
 if [ -f time${TIME2}-${TARGET}-aflgo-bad.txt ];then
 	rm time${TIME2}-${TARGET}-aflgo-bad.txt
 fi
-
+:<<!
 for((i=1;i<=$((ITER));i++));  
 do
 # Construct seed corpus
@@ -78,7 +78,7 @@ if [ "$ERR_STR1" != "" -o "$ERR_STR2" != "" ];then
 fi
 cat $DIR_OUT/${TARGET}_result/statistics >> ./time${TIME2}-${TARGET}-aflgo-good-statistics
 done
-:<<!
+!
 ./compile_and_test_with_aflgo_origin.sh $TARGET
 AFLGO=/home/yangke/Program/AFL/aflgo/bak/aflgo-good
 SUBJECT=$AFLGO/tutorial/samples/test
@@ -105,7 +105,7 @@ else
 /usr/bin/time -a -o time${TIME2}-${TARGET}-aflgo-bad.txt $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME2 -i $DIR_IN -o $DIR_OUT $SUBJECT/${TARGET}_profiled @@
 fi
 done 
-!
+
 :<<!
 echo time${TIME1}-${TARGET}-aflgo-good
 ./show-wall-time.sh time${TIME1}-${TARGET}-aflgo-good.txt
