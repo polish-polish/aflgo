@@ -26,8 +26,7 @@ SUBJECT=$DOWNLOAD_DIR
 TMP_DIR=$SUBJECT/temp
 SCRIPT_DIR=$TEST_SUITE_DIR/libjpeg-turbo-07-2017
 
-
-
+:<<!
 if [ "$1" != "-" ] ; then
 	if [ -d $TMP_DIR ]; then
 		rm -rf $TMP_DIR
@@ -47,7 +46,7 @@ if [ "$1" != "-" ] ; then
 	fi
 	echo -e "jdmarker.c:658\njdmarker.c:659" >$TMP_DIR/BBtargets.txt
 
-	cd $DOWNLOAD_DIR/BUILD/
+	
 	ADDITIONAL="-targets=$TMP_DIR/BBtargets.txt -outdir=$TMP_DIR -flto -fuse-ld=gold -Wl,-plugin-opt=save-temps"
 
 	export CC=$AFLGO/afl-clang-fast
@@ -58,10 +57,11 @@ if [ "$1" != "-" ] ; then
 	export LDFLAGS="-lpthread"
 
 	#1st compile
+	cd $DOWNLOAD_DIR/BUILD/
 	autoreconf -fiv
-	[ ! -e ./Makefile ] && ./configure
+	[ ! -e ./Makefile ] && ./configure --disable-shared
 	[ -e ./.libs/libturbojpeg.a ] && make clean
-	make
+	cd simd && make && cd .. && make libturbojpeg.la
 	cd $SUBJECT
 	$CXX $CXXFLAGS $LDFLAGS -std=c++11 -v $SCRIPT_DIR/libjpeg_turbo_fuzzer.cc $TEST_SUITE_DIR/examples/example-hooks.cc -I BUILD BUILD/.libs/libturbojpeg.a  -o ${TARGET}_profiled
 
@@ -72,19 +72,25 @@ if [ "$1" != "-" ] ; then
 	# Generate distance
 
 	$AFLGO/scripts/genDistance.sh $SUBJECT $TMP_DIR ${TARGET}_profiled
+	#cat $TMP_DIR/distance.callgraph.txt | sort | uniq > $TMP_DIR/distance.callgraph2.txt && mv $TMP_DIR/distance.callgraph2.txt $TMP_DIR/distance.callgraph.txt
 
 	echo "Distance values:"
 	head -n5 $TMP_DIR/distance.cfg.txt
 	echo "..."
 	tail -n5 $TMP_DIR/distance.cfg.txt
 
-	cd $DOWNLOAD_DIR/BUILD/
-	make clean
+	
 	export CFLAGS="-distance=$TMP_DIR/distance.cfg.txt -outdir=$TMP_DIR"
 	export CXXFLAGS="-distance=$TMP_DIR/distance.cfg.txt -outdir=$TMP_DIR"
 
-	#2nd compile	
-	./configure  && make
+	#2nd compile
+	cd $DOWNLOAD_DIR/BUILD/	
+	./configure --disable-shared
+	if [ -d $TMP_DIR/rid_bbname_pairs.txt ];then
+		rm $TMP_DIR/rid_bbname_pairs.txt
+	fi
+	make clean
+	cd simd && make && cd .. && make libturbojpeg.la
 
 	cd $SUBJECT
 	$CXX $CXXFLAGS $LDFLAGS -std=c++11 -v $SCRIPT_DIR/libjpeg_turbo_fuzzer.cc $TEST_SUITE_DIR/examples/example-hooks.cc -I BUILD BUILD/.libs/libturbojpeg.a  -o ${TARGET}_profiled
@@ -93,13 +99,13 @@ if [ "$1" != "-" ] ; then
 		#$AFLGO/tutorial/samples/test/vis-dot.sh $TMP_DIR/dot-files
 	fi
 fi
+!
 cd $SUBJECT
 
 TIME=15m
 DIR_IN=$DOWNLOAD_DIR/in
 DIR_OUT=$DOWNLOAD_DIR/out
-
-if [ ! -d $DIR_IN ]; then
+if [ "$DIR_IN" != "-" -a ! -d $DIR_IN ]; then
 	mkdir $DIR_IN
 	cp $TEST_SUITE_DIR/libjpeg-turbo-07-2017/seeds/seed.jpg $DIR_IN
 fi
@@ -113,7 +119,7 @@ if [ -f $TIME_RECORD_FILE ];then
 	rm $TIME_RECORD_FILE
 fi
 
-ITER=40
+ITER=20
 for((i=1;i<=$((ITER));i++));  
 do
 if [ -d $DIR_OUT ]; then

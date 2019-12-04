@@ -3314,10 +3314,17 @@ static void write_crash_readme(void) {
 //TODO: change it as a structure
 #define MAX_VERTEX_NUM MAP_SIZE
 #define MAX_EDGE_NUM (MAP_SIZE<<1)//The max degree of a vertex is 2
-int out_edge_index[MAX_EDGE_NUM][2];
+static int out_edge_index[MAX_EDGE_NUM][2];
 //int in_edge_index[MAX_EDGE_NUM][2];
-static int vertex_index[MAX_VERTEX_NUM];
-
+struct vertex_item{
+	int rid;
+	char bbname[256];
+	u8 can_reach_target;
+	//char nid[32];
+	//char key_str[1024];
+};
+static struct vertex_item vertex_index[MAX_VERTEX_NUM];
+u8 reachable_map_by_rid[MAX_VERTEX_NUM];//reachable:1,otherwise:0
 u8 bb_cov_map_by_rid[MAX_VERTEX_NUM];//cov:1,uncov:0
 u8 out_edge_cov_index[MAX_EDGE_NUM];//cov:1,uncov:0
 
@@ -3325,7 +3332,7 @@ static int vertex_num=0;
 static int edge_num=0;
 static int cfg_loaded=0;
 static void loadCFG() {
-
+	/*1. init vetex_index */
 	u8 *fn = alloc_printf("%s/%s",cfg_directory, "node_index.txt");
 	//OKF("Vertex_Index file:%s",fn);
 	FILE * f;
@@ -3339,18 +3346,29 @@ static void loadCFG() {
 		if(vertex_num>=MAX_VERTEX_NUM){
 			FATAL("Error occured when loading CFG, vertexes overflow!!");
 		}
-		int rid=atoi(tmp);
-		//OKF("rid:%d",rid);
-		vertex_index[vertex_num]=rid;
+		char *rid_str=strtok(tmp,"|");
+		int rid=atoi(rid_str);
+		char * nid=strtok(NULL,"|");
+		char * key_str=strtok(NULL,"|");
+		char * bbname=strtok(key_str,";");
+		if (strlen(bbname)==0)
+			strcpy(vertex_index[vertex_num].bbname,"@");
+		else
+			strcpy(vertex_index[vertex_num].bbname,bbname);
+		//OKF("rid:%d,p=%s,nid=%s,bbname=%s",rid,nid,vertex_index[vertex_num].bbname);
+		vertex_index[vertex_num].rid=rid;
+		vertex_index[vertex_num].can_reach_target=0;
+
 		bb_cov_map_by_rid[rid]=0;//mix coverage init process.TODO: decouple
+		reachable_map_by_rid[vertex_index[vertex_num].rid]=0;//mix reachable_map init process.TODO: decouple
 		vertex_num++;
 	}
-	vertex_index[vertex_num]=-1;
+	vertex_index[vertex_num].rid=-1;//denote the end of vertex index
 	//OKF("Total: %d vertexes.",vertex_num);
 	ck_free(fn);
 	fclose(f);
 
-
+    /*2. init out_edge_index */
 	fn = alloc_printf("%s/%s",cfg_directory, "out_edge_index.txt");
 	//OKF("Out Edge Index file:%s",fn);
 	if (!(f = fopen(fn, "r"))) {
@@ -3373,6 +3391,35 @@ static void loadCFG() {
 	}
 	out_edge_index[edge_num][0]=-1;out_edge_index[edge_num][1]=-1;//elements ends with value -1
 	//OKF("Total: %d out_edges.",edge_num);
+	ck_free(fn);
+	fclose(f);
+
+	/*3. init reachable bbname list */
+	fn = alloc_printf("%s/%s",cfg_directory, "distance.cfg.txt");
+	if (!(f = fopen(fn, "r"))) {
+		ck_free(fn);
+	}
+
+	int rlist_num=0;
+	while (fgets(tmp, MAX_LINE, f)) {
+		if(rlist_num>=MAX_VERTEX_NUM){
+			FATAL("Error occured when loading CFG, edges overflow!!");
+		}
+		///OKF("orig_out:%s",strtok(tmp,"\n"));
+		char * bbname=strtok(tmp,",");
+		char * distance=strtok(NULL,",");
+		for (int i=0;i<vertex_num;i++)
+		{
+			if (0==strcmp(vertex_index[vertex_num].bbname,bbname))
+			{
+				reachable_map_by_rid[vertex_index[vertex_num].rid]=1;
+				vertex_index[vertex_num].can_reach_target=0;
+				OKF("%d,%s reachable",vertex_index[vertex_num].rid,vertex_index[vertex_num].bbname);
+			}
+		}
+		rlist_num++;
+	}
+	OKF("Total: %d reachable bbname.",rlist_num);
 	ck_free(fn);
 	fclose(f);
     /* in_edge_index is not useful currently but we keep it for sake of future cite */
@@ -3431,9 +3478,9 @@ static void update_margin_bbs()
 	}
 
 	/*2 clean margin record*/
-	for(int i=0;i<vertex_num && vertex_index[i]!=-1;i++)
+	for(int i=0;i<vertex_num && vertex_index[i].rid!=-1 ;i++)
 	{
-		margin_bb_query_by_rid[vertex_index[i]]=0;
+		margin_bb_query_by_rid[vertex_index[i].rid]=0;
 		margin_bb_rid[i]=-1;
 	}
 	margin_bb_count=0;
@@ -3444,7 +3491,7 @@ static void update_margin_bbs()
 		int start=out_edge_index[i][0];
 		int end=out_edge_index[i][1];
 		if (virgin_bits[(start>>1)^end]==0xff && bb_cov_map_by_rid[start]){
-			if(margin_bb_query_by_rid[start]==0){
+			if(margin_bb_query_by_rid[start]==0 && reachable_map_by_rid[end]==0){
 				margin_bb_query_by_rid[start]=1;
 				margin_bb_rid[margin_bb_count++]=start;
 			}
@@ -3602,7 +3649,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 				}
 				//OKF("%02d,%d|%d|[%d]%s",i,mut_score[i],mut_cnt[i],tmp_mut_cnt[i],get_description(i));
 			}
-    		OKF("#######   MUTPOS statistics:");
+    		/*OKF("#######   MUTPOS statistics:");
     		for(int j=0;j<MAX_MUT_POS;j++){
     			int cnt=0;
     			for(int i=0;i<MUT_NUM;i++)
@@ -3614,7 +3661,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     			if(cnt>0){
     				OKF("%03d-[%d",j,cnt);
     			}
-			}
+			}*/
     		//record_value_changing_mutation();
     		int randwin=0;
     		if(mut_prior_mode){

@@ -20,6 +20,7 @@ elif [ "$TARGET" == "maze" ] ; then
 fi
 if [ "$2" != "-" ] ; then
 	if [ ! -f ./${TARGET}.c ]; then
+	    echo "We need ${TARGET}.c in current directory:$SUBJECT."
 	    exit 1
 	fi
         rm -rf $TMP_DIR # *.bc *.resolution.txt *.o

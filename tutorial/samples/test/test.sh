@@ -23,8 +23,14 @@ elif [ "$TARGET" == "regex" ] ; then
 	TIME1=1m
 	TIME2=2m
 elif [ "$TARGET" == "maze" ] ; then
-	TIME1=5m
-	TIME2=10m
+	#Total fuzz time with TIME=5m & TIME=10m
+	#30m44s,27m47s AFLGO origin
+	#1m07s,0m37s, #always mut_prior_mode & 15,16 mutator only & don't cleanup_value_changing_mut_record()  
+	#3m18s,3m55s, #always mut_prior_mode & all mutator & don't cleanup_value_changing_mut_record()
+	#1m49s,1m42s, #always mut_prior_mode & all mutator & cleanup_value_changing_mut_record() //current selected strategy
+	#8m56s,5m40s, #always mut_prior_mode & all mutator & cleanup_value_changing_mut_record() & without saveing var change seed(return 0 in save_interesting)
+	TIME1=1m 
+	TIME2=2m 
 fi
 # cleanup time record
 if [ -f time${TIME1}-${TARGET}-aflgo-good.txt ];then
@@ -41,7 +47,7 @@ fi
 if [ -f time${TIME2}-${TARGET}-aflgo-bad.txt ];then
 	rm time${TIME2}-${TARGET}-aflgo-bad.txt
 fi
-:<<!
+
 for((i=1;i<=$((ITER));i++));  
 do
 # Construct seed corpus
@@ -78,7 +84,7 @@ if [ "$ERR_STR1" != "" -o "$ERR_STR2" != "" ];then
 fi
 cat $DIR_OUT/${TARGET}_result/statistics >> ./time${TIME2}-${TARGET}-aflgo-good-statistics
 done
-!
+:<<!
 ./compile_and_test_with_aflgo_origin.sh $TARGET
 AFLGO=/home/yangke/Program/AFL/aflgo/bak/aflgo-good
 SUBJECT=$AFLGO/tutorial/samples/test
@@ -105,13 +111,13 @@ else
 /usr/bin/time -a -o time${TIME2}-${TARGET}-aflgo-bad.txt $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME2 -i $DIR_IN -o $DIR_OUT $SUBJECT/${TARGET}_profiled @@
 fi
 done 
+!
 
-:<<!
 echo time${TIME1}-${TARGET}-aflgo-good
 ./show-wall-time.sh time${TIME1}-${TARGET}-aflgo-good.txt
 echo time${TIME2}-${TARGET}-aflgo-good
 ./show-wall-time.sh time${TIME2}-${TARGET}-aflgo-good.txt
-
+:<<!
 echo time${TIME1}-${TARGET}-aflgo-bad
 ./show-wall-time.sh time${TIME1}-${TARGET}-aflgo-bad.txt
 echo time${TIME2}-${TARGET}-aflgo-bad

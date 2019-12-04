@@ -7,6 +7,13 @@
 
 header_jfif="JFIF\x00"
 header_jfxx="JFXX\x00"
+header_split0="J"
+header_split1="F"
+header_split2="X"
+header_split3="I"
+header_split4="\x10"
+header_split5="\x11"
+header_split6="\x13"
 
 section_ffc0="\xff\xc0"
 section_ffc2="\xff\xc2"

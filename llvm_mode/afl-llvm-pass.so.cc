@@ -88,6 +88,7 @@ public:
 	/* add by yangke start */
 	static unsigned instrument_cnt;
 	static unsigned lattice;//Control bits of Shl operation for value to store: 0,8,16,24(4B) or 0,8,16,24,32,40,48,56(8B)
+	static unsigned bb_cnt;
 	/* add by yangke end */
 	AFLCoverage() :
 			ModulePass(ID) {
@@ -100,8 +101,8 @@ protected:
 			unsigned int cur_loc);
 	size_t hashName(Value *v);
 	void debug(Value *v,std::string info="#Value#--");
-	void bbRecord(unsigned int cur_loc, BasicBlock &BB,
-			std::ofstream &bbname_id_pairs);
+	void bbRecord(unsigned int cur_loc, BasicBlock &BB, std::ofstream &bbname_id_pairs);
+	std::string getBBName(BasicBlock &BB);
 	void handleGetElementPtrInst(Value *insert_point, GetElementPtrInst * GEPI, GlobalVariable *AFLMapPtr,
 			GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
 			unsigned int cur_loc);
@@ -127,10 +128,74 @@ protected:
 char AFLCoverage::ID = 0;
 /* add by yangke start */
 unsigned AFLCoverage::instrument_cnt = 0;
-unsigned AFLCoverage::lattice = 0;
+unsigned AFLCoverage::bb_cnt = 0;
+unsigned AFLCoverage::lattice = 0;//shr step
 /* add by yangke end */
 void AFLCoverage::bbRecord(unsigned int cur_loc, BasicBlock &BB,
 		std::ofstream &bbname_id_pairs) {
+	std::string id_str="";
+	std::string loc_str="";
+	std::string bb_cnt_str="";
+	std::stringstream ss;
+	ss<<cur_loc;
+	ss>>loc_str;
+	ss.clear();
+	//OKF("%d",bb_cnt);
+	ss<<bb_cnt++;
+	ss>>bb_cnt_str;
+	id_str= bb_cnt_str+";"+loc_str+";"+getBBName(BB)+";";
+	for (auto pit = pred_begin(&BB), pet = pred_end(&BB); pit != pet; ++pit)
+	{
+		BasicBlock* predecessor = *pit;
+		if (id_str[id_str.size()-1]==';'){
+			id_str+= getBBName(*predecessor);
+		}else{
+			id_str+= ","+getBBName(*predecessor);
+		}
+		id_str+= "{";
+		for (auto pit2 = pred_begin(predecessor), pet2 = pred_end(predecessor); pit2 != pet2; ++pit2)
+		{
+			BasicBlock* pred_pred = *pit2;
+			if (id_str[id_str.size()-1]=='{'){
+				id_str+=getBBName(*pred_pred);
+			}else{
+				id_str+="#"+getBBName(*pred_pred);
+			}
+			id_str+="(";
+			for (auto pit3 = pred_begin(pred_pred), pet3 = pred_end(pred_pred); pit3 != pet3; ++pit3)
+			{
+				BasicBlock* pred_pred_pred = *pit3;
+				if (id_str[id_str.size()-1]=='('){
+					id_str+=getBBName(*pred_pred_pred);
+				}else{
+					id_str+="&"+getBBName(*pred_pred_pred);
+				}
+			}
+			if (id_str[id_str.size()-1]=='('){
+				id_str=id_str.substr(0,id_str.size()-1);
+			}else{
+				id_str+= ")";
+			}
+		}
+		if (id_str[id_str.size()-1]=='{'){
+			id_str=id_str.substr(0,id_str.size()-1);
+		}else{
+			id_str+= "}";
+		}
+	}
+	id_str+=";";
+	TerminatorInst *TI = BB.getTerminator();
+	for (auto *sit : TI->successors())//for (BasicBlock *Succ : TI->successors())
+	{
+		if(id_str[id_str.size()-1]==';'){
+			id_str+= getBBName(*sit);
+		}else{
+			id_str+="," + getBBName(*sit);
+		}
+	}
+	bbname_id_pairs << id_str << "\n";
+}
+std::string AFLCoverage::getBBName(BasicBlock &BB) {
 	std::string bb_name("");
 	std::string filename;
 	unsigned line;
@@ -178,11 +243,16 @@ void AFLCoverage::bbRecord(unsigned int cur_loc, BasicBlock &BB,
 					filename = filename.substr(found + 1);
 
 				bb_name = filename + ":" + std::to_string(line);
-				break;
+				return bb_name;
+				//break;
 			}
 		}
 	}
-	bbname_id_pairs << bb_name << "," << cur_loc << "\n";
+	//bbname_id_pairs << bb_name << "," << cur_loc << "\n";
+	if (bb_name.size()>0)
+		return bb_name;
+	else
+		return "@";
 }
 inline void AFLCoverage::debug(Value *v,std::string info) { //contains format string vulnerability
 #ifdef DEBUG_
@@ -443,7 +513,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 	} else if (!DistanceFile.empty()) {
 		if (OutDirectory.empty()) {
 			FATAL("Provide output directory '-outdir <directory>'");
-			FATAL("We need to out put <BBname,RandomID> pairs into <directory>/bbname_rid_pairs.txt");
+			FATAL("We need to out put <BBname,RandomID> pairs into <directory>/rid_bbname_pairs.txt");
 			FATAL("TIP:<BBname>::=<filename>:<linenum>  e.g 'entry.c:45,1804289383'");
 			return false;
 		}
@@ -746,8 +816,8 @@ bool AFLCoverage::runOnModule(Module &M) {
 		/*add by yangke start*/
 		std::ofstream bbname_id_pairs;
 		OKF("#Dump <<BBname>,RandomId> pairs to %s",
-				(OutDirectory + "/bbname_rid_pairs.txt\n").c_str());
-		bbname_id_pairs.open(OutDirectory + "/bbname_rid_pairs.txt",
+				(OutDirectory + "/rid_bbname_pairs.txt\n").c_str());
+		bbname_id_pairs.open(OutDirectory + "/rid_bbname_pairs.txt",
 				std::ofstream::out | std::ofstream::app);
 
 		/*add by yangke end*/
@@ -867,7 +937,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 						if (ICmpInst * icmp = dyn_cast < ICmpInst > (cond)) {
 							debug(icmp,"#Condition Value is a ICmpInst#");
 							handleICmpInst(cond, icmp, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-							OKF("Instrument[%d] With Condition:ICmpInst OK!\n",instrument_cnt++);
+							//OKF("Instrument[%d] With Condition:ICmpInst OK!\n",instrument_cnt++);
 						} else if (FCmpInst * fcmp = dyn_cast < FCmpInst > (cond)) {
 							debug(fcmp,"#FCompInst#");
 							////FATAL("TODO:Check and fix it!");
@@ -875,7 +945,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 						} else if (BinaryOperator * BOP = dyn_cast < BinaryOperator > (cond)) {
 							debug(BOP,"#Condition Value is a BinaryOperator#");
 							handleBinaryOperator(cond, BOP, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-							OKF("--Instrument[%d] With Condition:BinaryOperator OK!\n",instrument_cnt++);
+							//OKF("--Instrument[%d] With Condition:BinaryOperator OK!\n",instrument_cnt++);
 						}
 					}
 				}else if (SwitchInst * SI = dyn_cast < SwitchInst > (TI)) {
@@ -883,11 +953,11 @@ bool AFLCoverage::runOnModule(Module &M) {
 					if (CastInst * CI = dyn_cast < CastInst > (cond)) {
 						debug(CI,"#Condition Value depends on CastInst#");
 						handleCastInst(cond, CI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-						OKF("Instrument[%d] With Condition:CastInst in SwitchInst OK!\n",instrument_cnt++);
+						//OKF("Instrument[%d] With Condition:CastInst in SwitchInst OK!\n",instrument_cnt++);
 					}else if (LoadInst * LI = dyn_cast < LoadInst > (cond)) {
 						debug(LI,"#Condition Value depends on LoadInst#");
 						handleLoadInst(cond, LI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-						OKF("Instrument[%d] With Condition:LoadInst in SwitchInst OK!\n",instrument_cnt++);
+						//OKF("Instrument[%d] With Condition:LoadInst in SwitchInst OK!\n",instrument_cnt++);
 					}
 
 					unsigned num=0;
@@ -899,7 +969,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 						ConstantInt * value=it.getCaseValue();
 						int64_t x=value->getSExtValue();
 						debug(value,"#Case Value#");
-						OKF("#Case Value#SExt#i32:%d", (int)x);
+						//OKF("#Case Value#SExt#i32:%d", (int)x);
 						//TODO: record and resuse these special data when testing.
 					}
 				}

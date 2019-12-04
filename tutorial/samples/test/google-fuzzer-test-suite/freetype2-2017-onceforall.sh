@@ -14,7 +14,7 @@ elif [ "$1" != "-" ];then
 echo "INVALID 1st ARGUMENT:$1"
 exit
 fi
-TARGET=target
+TARGET=ttgload
 if [ ! -d $DOWNLOAD_DIR ]; then
 mkdir $DOWNLOAD_DIR
 fi 
@@ -24,15 +24,15 @@ SUBJECT=$DOWNLOAD_DIR
 TMP_DIR=$SUBJECT/temp
 
 if [ "$1" != "-" ] ; then
-	#if [ -d $TMP_DIR ]; then
-	#	rm -rf $TMP_DIR
-	#fi
-	#mkdir $TMP_DIR
+	if [ -d $TMP_DIR ]; then
+		rm -rf $TMP_DIR
+	fi
+	mkdir $TMP_DIR
 
 	[ ! -d freetype2 ] && git clone git://git.sv.nongnu.org/freetype/freetype2.git && cd freetype2 && git checkout cd02d359a6d0455e9d16b87bf9665961c4699538 && cd ..
 	[ ! -d BUILD ] && cp -R freetype2 BUILD
-	#rm -rf ./BUILD
-	#cp -R freetype2 BUILD
+	rm -rf ./BUILD
+	cp -R freetype2 BUILD
 
 	#setup targets
 	if [ "`sed -n 1711p  BUILD/src/truetype/ttgload.c`" != "{abort();" ] ;then
@@ -52,9 +52,9 @@ if [ "$1" != "-" ] ; then
 	export LDFLAGS="-lpthread"
 
 	#1st compile
-	#./autogen.sh
-	#./configure  --disable-shared --with-harfbuzz=no --with-bzip2=no --with-png=no
-	#make
+	./autogen.sh
+	./configure  --disable-shared --with-harfbuzz=no --with-bzip2=no --with-png=no
+	make
 	cd $SUBJECT
 	$CXX $CXXFLAGS -std=c++11 -I BUILD/include -I BUILD/ BUILD/src/tools/ftfuzzer/ftfuzzer.cc $TEST_SUITE_DIR/examples/example-hooks.cc BUILD/objs/.libs/libfreetype.a -lpng -larchive -lbz2 -lz -o ${TARGET}_profiled
 
@@ -71,7 +71,6 @@ if [ "$1" != "-" ] ; then
 	echo "..."
 	tail -n5 $TMP_DIR/distance.cfg.txt
 
-
 	CFLAGS="-distance=$TMP_DIR/distance.cfg.txt -outdir=$TMP_DIR"
 	CXXFLAGS="-distance=$TMP_DIR/distance.cfg.txt -outdir=$TMP_DIR"
 
@@ -86,11 +85,12 @@ if [ "$1" != "-" ] ; then
 	fi
 fi
 
-TIME=1m
+
+TIME=40m
 DIR_IN=$DOWNLOAD_DIR/in
 DIR_OUT=$DOWNLOAD_DIR/out
-
-if [[ ! -d $DIR_IN ]]; then
+#rm -rf $DIR_IN
+if [ "$DIR_IN" != "-" -a ! -d $DIR_IN ]; then
   mkdir $DIR_IN
   git clone https://github.com/unicode-org/text-rendering-tests.git TRT
   # TRT/fonts is the full seed folder, but they're too big
@@ -107,20 +107,20 @@ fi
 if [ -f $TIME_RECORD_FILE ]; then
 	rm $TIME_RECORD_FILE
 fi
-:<<!
-ITER=40
+export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu/
+ITER=10
 for((i=1;i<=$((ITER));i++));
 do
-if [ -d $DIR_OUT ]; then
+if [ "$DIR_IN" != "-" -a -d $DIR_OUT ]; then
 	rm -rf $DIR_OUT
 fi
 if [[ $AFLGO == *good ]];then
-	#gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
-	/usr/bin/time -a -o $TIME_RECORD_FILE $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR  $SUBJECT/${TARGET}_profiled @@
+	#gdb --args $AFLGO/afl-fuzz -m 100M -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
+	/usr/bin/time -a -o $TIME_RECORD_FILE $AFLGO/afl-fuzz -m 100M -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR  $SUBJECT/${TARGET}_profiled @@
 elif [[ $AFLGO == *origin ]];then
-	#gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT $SUBJECT/${TARGET}_profiled @@
-	/usr/bin/time -a -o $TIME_RECORD_FILE $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT $SUBJECT/${TARGET}_profiled @@
+	#gdb --args $AFLGO/afl-fuzz -m 100M -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT $SUBJECT/${TARGET}_profiled @@
+	/usr/bin/time -a -o $TIME_RECORD_FILE $AFLGO/afl-fuzz -m 100M -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT $SUBJECT/${TARGET}_profiled @@
 fi
 done
-!
+
 popd
