@@ -22,7 +22,7 @@ cd $DOWNLOAD_DIR
 
 SUBJECT=$DOWNLOAD_DIR
 TMP_DIR=$SUBJECT/temp
-
+:<<!
 if [ "$1" != "-" ] ; then
 	if [ -d $TMP_DIR ]; then
 		rm -rf $TMP_DIR
@@ -77,14 +77,14 @@ if [ "$1" != "-" ] ; then
 	#2nd compile
 	cd $DOWNLOAD_DIR/BUILD/	
 	make clean && ./configure --disable-shared --with-harfbuzz=no --with-bzip2=no --with-png=no   && make
-	cd $SUBJECT 
+	cd $SUBJECT
 	$CXX $CXXFLAGS -std=c++11 -I BUILD/include -I BUILD/ BUILD/src/tools/ftfuzzer/ftfuzzer.cc $TEST_SUITE_DIR/examples/example-hooks.cc BUILD/objs/.libs/libfreetype.a -lpng -larchive -lbz2 -lz -o ${TARGET}_profiled
 	if [[ $AFLGO == *good ]];then
 		$AFLGO/scripts/index_all_cfg_edges.py -d $TMP_DIR/dot-files
 		#$AFLGO/tutorial/samples/test/vis-dot.sh $TMP_DIR/dot-files
 	fi
 fi
-
+!
 
 TIME=40m
 DIR_IN=$DOWNLOAD_DIR/in

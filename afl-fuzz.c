@@ -313,9 +313,10 @@ static s8  interesting_8[]  = { INTERESTING_8 };
 static s16 interesting_16[] = { INTERESTING_8, INTERESTING_16 };
 static s32 interesting_32[] = { INTERESTING_8, INTERESTING_16, INTERESTING_32 };
 /* add by yangke start */
-static u8 margin_bb_query_by_rid[1<<16]; //TODO :replace 1<<16 with MAX_VERTEX_NUM
 static int margin_bb_rid[1<<16];
 static int margin_bb_count=0;
+static double min_d=1.7E+308;//min distance of margin basic block, initialize in loadCFG().
+static double max_d=-0.1;//max distance of current margin basic block, initialize in loadCFG().
 
 /* remember interesting mutaion operation and the operateed positions */
 
@@ -1064,8 +1065,8 @@ static inline u8 has_new_bits(u8* virgin_map) {
  */
 
 #ifdef __x86_64__
-  static  inline u8 has_new_var_bits(u64* virgin_var_map) {
-	u8  ret = 0;
+  static  inline int has_new_var_bits(u64* virgin_var_map) {
+	int ret =-1;//invalid distance value
 	u64* vir = (u64*) virgin_var_map;
 	u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
 	//OKF("margin_bb_count=%d",margin_bb_count);
@@ -1083,7 +1084,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
 			//      ^
 			vir[rid]&=cur[rid];
 			///vir[rid]=cur[rid];
-			ret=1;
+			ret=rid;//TODO test case changed by this set of mutation may affect multiple margin BBs, should return all of them.
 		}
 	}
 	//OKF("margin_bb_count=%d",margin_bb_count);
@@ -1093,16 +1094,16 @@ static inline u8 has_new_bits(u8* virgin_map) {
 	return ret;
   }
 #else
-  static inline u8 has_new_var_bits(u32* virgin_var_map) {
-	    u8  ret = 0;
+  static inline int has_new_var_bits(u32* virgin_var_map) {
+	    int  ret = -1;
 	    u32* vir = (u32*) virgin_var_map;
 	    u32* cur = (u32*)(trace_bits+MAP_SIZE+8);
 
 	    for(int i=0;i<margin_bb_count;i++,vir++,cur++){
 	    	int rid=margin_bb_rid[i];
-	    	if(unlikely(cur[rid] & vir[rid])){
-				ret=1;
-				vir[rid]&=~cur[rid];
+	    	if(unlikely(vir[rid] & (~cur[rid]))){
+				vir[rid]&=cur[rid];
+				ret=rid
 			}
 	    }
 	    return ret;
@@ -3319,13 +3320,15 @@ static int out_edge_index[MAX_EDGE_NUM][2];
 struct vertex_item{
 	int rid;
 	char bbname[256];
-	u8 can_reach_target;
+	double distance;//distance
+	u8 cov;//cov:1,uncov:0
+	u8 out_degree;
+	u8 is_margin;//yes:1,no:0
 	//char nid[32];
 	//char key_str[1024];
 };
 static struct vertex_item vertex_index[MAX_VERTEX_NUM];
-u8 reachable_map_by_rid[MAX_VERTEX_NUM];//reachable:1,otherwise:0
-u8 bb_cov_map_by_rid[MAX_VERTEX_NUM];//cov:1,uncov:0
+static int rid2index[MAX_VERTEX_NUM];
 u8 out_edge_cov_index[MAX_EDGE_NUM];//cov:1,uncov:0
 
 static int vertex_num=0;
@@ -3339,6 +3342,7 @@ static void loadCFG() {
 	if (!(f = fopen(fn, "r"))) {
 		ck_free(fn);
 		FATAL("No such file or directory: %s",fn);
+
 	}
 	vertex_num=0;
     u8 tmp[MAX_LINE];
@@ -3357,10 +3361,10 @@ static void loadCFG() {
 			strcpy(vertex_index[vertex_num].bbname,bbname);
 		//OKF("rid:%d,p=%s,nid=%s,bbname=%s",rid,nid,vertex_index[vertex_num].bbname);
 		vertex_index[vertex_num].rid=rid;
-		vertex_index[vertex_num].can_reach_target=0;
-
-		bb_cov_map_by_rid[rid]=0;//mix coverage init process.TODO: decouple
-		reachable_map_by_rid[vertex_index[vertex_num].rid]=0;//mix reachable_map init process.TODO: decouple
+		vertex_index[vertex_num].cov=0;
+		vertex_index[vertex_num].distance=-1.0;
+		vertex_index[vertex_num].out_degree=0;
+		rid2index[rid]=vertex_num;
 		vertex_num++;
 	}
 	vertex_index[vertex_num].rid=-1;//denote the end of vertex index
@@ -3373,6 +3377,7 @@ static void loadCFG() {
 	//OKF("Out Edge Index file:%s",fn);
 	if (!(f = fopen(fn, "r"))) {
 		ck_free(fn);
+		FATAL("No such file or directory: %s",fn);
 	}
 	edge_num=0;
 	while (fgets(tmp, MAX_LINE, f)) {
@@ -3386,6 +3391,11 @@ static void loadCFG() {
 		out_edge_index[edge_num][0]=atoi(first);
 		out_edge_index[edge_num][1]=atoi(second);
 		out_edge_cov_index[edge_num]=0;//mix coverage init process.TODO: decouple
+		int idx=rid2index[out_edge_index[edge_num][0]];
+		if(idx<0||idx>=vertex_num){
+			FATAL("Wrong rid:%d, in file:%s:%d",out_edge_index[edge_num][0],fn,edge_num+1);
+		}
+		vertex_index[rid2index[out_edge_index[edge_num][0]]].out_degree+=1;
 		//OKF("edge_out:%d,%d",out_edge_index[edge_num][0],out_edge_index[edge_num][1]);
 		edge_num++;
 	}
@@ -3398,6 +3408,7 @@ static void loadCFG() {
 	fn = alloc_printf("%s/%s",cfg_directory, "distance.cfg.txt");
 	if (!(f = fopen(fn, "r"))) {
 		ck_free(fn);
+		FATAL("No such file or directory: %s",fn);
 	}
 
 	int rlist_num=0;
@@ -3407,13 +3418,12 @@ static void loadCFG() {
 		}
 		///OKF("orig_out:%s",strtok(tmp,"\n"));
 		char * bbname=strtok(tmp,",");
-		char * distance=strtok(NULL,",");
+		double d=atof(strtok(NULL,","));
 		for (int i=0;i<vertex_num;i++)
 		{
 			if (0==strcmp(vertex_index[vertex_num].bbname,bbname))
 			{
-				reachable_map_by_rid[vertex_index[vertex_num].rid]=1;
-				vertex_index[vertex_num].can_reach_target=0;
+				vertex_index[vertex_num].distance=d;
 				OKF("%d,%s reachable",vertex_index[vertex_num].rid,vertex_index[vertex_num].bbname);
 			}
 		}
@@ -3465,24 +3475,20 @@ static void update_margin_bbs()
 	{
 		int start=out_edge_index[i][0];
 		int end=out_edge_index[i][1];
-		if (virgin_bits[(start>>1)^end]==0xff)
+		if (virgin_bits[(start>>1)^end]!=0xff)
 		{
-			/* only mark the edge as covered because we don't know whether vertexes are covered.*/
-			out_edge_cov_index[i]=0;
-		}
-		else{
 			out_edge_cov_index[i]=1;
-			bb_cov_map_by_rid[start]=1;
-			bb_cov_map_by_rid[end]=1;
+			vertex_index[rid2index[start]].cov=1;
+			vertex_index[rid2index[end]].cov=1;
 		}
 	}
 
 	/*2 clean margin record*/
 	for(int i=0;i<vertex_num && vertex_index[i].rid!=-1 ;i++)
 	{
-		margin_bb_query_by_rid[vertex_index[i].rid]=0;
 		margin_bb_rid[i]=-1;
 	}
+	margin_bb_rid[vertex_num]=-1;
 	margin_bb_count=0;
 
 	/*3. find and record margin basic blocks.*/
@@ -3490,13 +3496,45 @@ static void update_margin_bbs()
 	{
 		int start=out_edge_index[i][0];
 		int end=out_edge_index[i][1];
-		if (virgin_bits[(start>>1)^end]==0xff && bb_cov_map_by_rid[start]){
-			if(margin_bb_query_by_rid[start]==0 && reachable_map_by_rid[end]==0){
-				margin_bb_query_by_rid[start]=1;
+		int idx=rid2index[start];
+		if(vertex_index[idx].out_degree>1 && vertex_index[idx].distance>0.0){
+			if (virgin_bits[(start>>1)^end]==0xff && vertex_index[idx].cov){
+				if (!vertex_index[idx].is_margin){//new margin found
+					u8 *fn = alloc_printf("%s/%s",cfg_directory, "out_edge_index.dot");
+					FILE * f;
+					if (!(f = fopen(fn, "r+"))) {
+						ck_free(fn);
+						return;
+					}
+					fseek(f,-2L,SEEK_END);
+					u8* node_str=alloc_printf("\n%d [label=\"%d\",color=Red ,shape=record];\n}",start,start);
+					fputs(node_str,f);
+					ck_free(node_str);
+					fclose(f);
+
+				}else{
+					//margin is still not solved
+					//current solving stratedy does not conquer the problem yet.
+				}
+				vertex_index[idx].is_margin=1;
 				margin_bb_rid[margin_bb_count++]=start;
+			}else{
+				/*if (vertex_index[idx].is_margin){
+					//this means the margin is solved
+
+				}*/
+				vertex_index[idx].is_margin=0;
 			}
 
 		}
+	}
+	for (int i=0;i<margin_bb_count;i++)
+	{
+		double it_d=vertex_index[rid2index[margin_bb_rid[i]]].distance;
+		if(it_d<min_d)
+			min_d=it_d;
+		if(it_d>max_d)
+			max_d=it_d;
 	}
 	//FATAL("KILL BY YANGKE update_margin_bbs.");
 }
@@ -3602,10 +3640,13 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 	      if (!cfg_loaded)
 	    	  loadCFG();
 	      update_margin_bbs();
-		  if(has_new_var_bits(virgin_var_bits)){
+	      int rid=has_new_var_bits(virgin_var_bits);
+	      double d=vertex_index[rid2index[rid]].distance;
+		  if(d>0.0){
 			  //print_mutation_table();
 			  //OKF("branch variable value changed in this mutation! set up mut_prior_mode=1 exploit the record mutation!");
-			  record_value_changing_mutation();
+			  double weight=1;//max_d*max_d-d*d;
+			  record_value_changing_mutation(weight);
 			  //cleanup here is not enough
 			  //because if we still need to clean up if we don't find new var bits
 			  //So clean up in the beginning of one_fuzz().
@@ -5603,7 +5644,7 @@ static inline void cleanup_mutation_record()
 		one_fuzz_mut_cnt[i]=0;
 	}
 }
-static inline void record_value_changing_mutation()
+static inline void record_value_changing_mutation(double weight)
 {
 	for(int i=0;i<MUT_NUM;i++)
 	{
@@ -5615,7 +5656,7 @@ static inline void record_value_changing_mutation()
 			{
 				if(tmp_mut[i][j]>0)
 				{
-					mut[i][j]+=tmp_mut[i][j];
+					mut[i][j]+=(int)(tmp_mut[i][j]*(weight));
 					int len=sprintf(ptr,"%d,",j);
 					if(len>0){
 						ptr+=len;
@@ -5627,7 +5668,7 @@ static inline void record_value_changing_mutation()
 					}
 				}
 			}
-			mut_cnt[i]+=tmp_mut_cnt[i];
+			mut_cnt[i]+=(int)(tmp_mut_cnt[i]*(weight));
 			total_monitored_mut_cnt+=tmp_mut_cnt[i];
 		}
 		//OKF("##%02d,%d|%d|%s%s",i,mut_score[i],mut_cnt[i],pos_list_str,get_description(i));
@@ -5709,14 +5750,22 @@ static inline void dispatch_random(u32 range,u32 * arg)
 		arg[0]=valid_mut[index];
     	//arg[0]=valid_mut[UR(valid_mut_cnt)];
 		int valid_pos[MAX_MUT_POS];
+		int bound_values2[MAX_MUT_POS];
+		int sum2=0;
 		int valid_pos_cnt=0;
 		for(int i=0;i<MAX_MUT_POS;i++){
 			if (mut[arg[0]][i]>0){
-				valid_pos[valid_pos_cnt++]=i;
+				valid_pos[valid_pos_cnt]=i;
+				sum2+=mut[arg[0]][i];
+				bound_values2[valid_pos_cnt]=sum2;
+				valid_pos_cnt++;
 			}
 		}
+
 		if(rand<60 && valid_pos_cnt>0){
 			arg[1]=valid_pos[UR(valid_pos_cnt)];
+			//int index2=binary_search(bound_values2,valid_pos_cnt,UR(sum2));
+			//arg[1]=valid_pos[index2];
 			switch (arg[0]){
 			case 0:
 				arg[1]=(arg[1]<<3)+UR(8);
@@ -6971,6 +7020,10 @@ havoc_stage:
     	 arg[0]=UR(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0));//original AFLGO setting
     	 arg[1]=-1;// be careful when it is used as the initial value is invalid pos -1
       }
+      /*
+      int arr[3]={8,9,11};
+      arg[0]=arr[UR(3)];
+      arg[1]=15;// cheat for libturbojpeg jdmarker:659 google-fuzzer-testsuite 12s */
       /* add by yangke end */
 
       switch (arg[0]) {

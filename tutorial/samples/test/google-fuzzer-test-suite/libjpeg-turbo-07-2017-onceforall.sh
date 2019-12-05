@@ -25,7 +25,6 @@ cd $DOWNLOAD_DIR
 SUBJECT=$DOWNLOAD_DIR
 TMP_DIR=$SUBJECT/temp
 SCRIPT_DIR=$TEST_SUITE_DIR/libjpeg-turbo-07-2017
-
 :<<!
 if [ "$1" != "-" ] ; then
 	if [ -d $TMP_DIR ]; then
@@ -102,7 +101,7 @@ fi
 !
 cd $SUBJECT
 
-TIME=15m
+TIME=1m
 DIR_IN=$DOWNLOAD_DIR/in
 DIR_OUT=$DOWNLOAD_DIR/out
 if [ "$DIR_IN" != "-" -a ! -d $DIR_IN ]; then
@@ -119,7 +118,7 @@ if [ -f $TIME_RECORD_FILE ];then
 	rm $TIME_RECORD_FILE
 fi
 
-ITER=20
+ITER=10
 for((i=1;i<=$((ITER));i++));  
 do
 if [ -d $DIR_OUT ]; then
