@@ -1,6 +1,6 @@
 #!/bin/bash
 TARGET=$1
-AFLGO=/home/yangke/Program/AFL/aflgo/bak/aflgo-good
+AFLGO=`pwd`/../../..
 TMP_DIR=$AFLGO/tutorial/samples/test/${TARGET}_temp
 ADDITIONAL="-targets=$TMP_DIR/BBtargets.txt -outdir=$TMP_DIR -flto -fuse-ld=gold -Wl,-plugin-opt=save-temps"
 LDFLAGS=-lpthread
@@ -18,6 +18,7 @@ elif [ "$TARGET" == "regex" ] ; then
 elif [ "$TARGET" == "maze" ] ; then
 	TIME=5m
 fi
+:<<!
 if [ "$2" != "-" ] ; then
 	if [ ! -f ./${TARGET}.c ]; then
 	    echo "We need ${TARGET}.c in current directory:$SUBJECT."
@@ -90,7 +91,7 @@ if [ "$2" != "-" ] ; then
 	
         
 fi
-:<<!
+!
 if [ "$TARGET" == "maze" ] ; then
 #gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -x $SUBJECT/maze.dict -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
 /usr/bin/time -a -o time.txt $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -x $SUBJECT/maze.dict -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
@@ -98,4 +99,4 @@ else
 #gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
 /usr/bin/time -a -o time.txt $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
 fi
-!
+

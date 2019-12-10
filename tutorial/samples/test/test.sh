@@ -5,7 +5,7 @@ if [ ! -n "$1" ] ;then
 fi
 TARGET=$1
 ./compile_and_test_with_aflgo.sh $TARGET
-AFLGO=/home/yangke/Program/AFL/aflgo/bak/aflgo-good
+AFLGO=`pwd`/../../..
 SUBJECT=$AFLGO/tutorial/samples/test
 TMP_DIR=$AFLGO/tutorial/samples/test/${TARGET}_temp
 DIR_IN=${SUBJECT}/${TARGET}_in
