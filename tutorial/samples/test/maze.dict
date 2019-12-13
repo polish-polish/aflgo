@@ -1,0 +1,5 @@
+#walk operations in maze
+up="w"
+down="s"
+left="a"
+right="d"
