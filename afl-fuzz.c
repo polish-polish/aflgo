@@ -3669,7 +3669,7 @@ static void update_margin_bbs()
 
 			if (virgin_bits[(start>>1)^end]==0xff && vertex_index[start_idx].cov==1){
 				if (vertex_index[start_idx].is_margin_last_check==0){//new margin found
-
+					/*
 					//DEBUG CODE
 					u8 *fn = alloc_printf("%s/%s",cfg_directory, "out_edge_index.dot");
 					FILE * f;
@@ -3685,7 +3685,7 @@ static void update_margin_bbs()
 					ck_free(fn);
 					char *cmd=alloc_printf("dot -Tsvg %s/out_edge_index.dot -o %s/out_edge_index.svg",cfg_directory,cfg_directory);
 					system(cmd);
-					ck_free(cmd);
+					ck_free(cmd);*/
 				}else{
 					//margin is still not solved
 					//current solving stratedy does not conquer the problem yet.
@@ -6067,10 +6067,11 @@ static inline void record_value_changing_mutation2(int index,int quality)
 		  print_mutation_table(index);
 	}
 }
-static int yk=0;
+/*
 static int chcnt=0;
 static void check_record(char * mark)//all values in record_map must be records in record_list
-{chcnt++;
+{
+	chcnt++;
 	const char *key;
 	map_iter_t iter = map_iter(&record_map);
 	u8 * log_file_name=alloc_printf("%s/check_log.txt", out_dir);
@@ -6102,17 +6103,19 @@ static void check_record(char * mark)//all values in record_map must be records 
 	close(debug_fd);
 	ck_free(log_file_name);
 }
+*/
+
+/*
+ * This function may change record_list
+ * if "to" or "from" not in record_list, it will cause SIGSEGV
+ * all value in record_map must be in record_list
+ * You can use "check_record();" to check the completenese when debugging
+ */
 static inline void  merge_record(Record* to, Record* from)
 {
 	if(!record_list||!to||!from||to==from){
 		FATAL("EROOR record_list=%p,from=%p,to=%p",record_list,to,from);
 	}
-	//Refine link list
-	Record * test_r;
-	for(test_r=record_list;test_r!=NULL&&test_r!=to;test_r=test_r->next);//SIGSEGV if to not in record_list
-	if(test_r==NULL)FATAL("Not in record_list to=%p",to);
-	//check_record();//all value in record_map must be in record_list
-
 	if(record_list==from)
 	{
 		record_list=record_list->next;
@@ -6122,8 +6125,6 @@ static inline void  merge_record(Record* to, Record* from)
 		if(prev==NULL)FATAL("Not in record_list from=%p",from);
 		prev->next=from->next;
 	}
-
-
 
 	//Merge distances
 	int to_num=hashset_num_items(to->B);
@@ -6135,8 +6136,6 @@ static inline void  merge_record(Record* to, Record* from)
 	for(hashset_itr_t iter = hashset_iterator(from->B);hashset_iterator_has_next(iter);hashset_iterator_next(iter))
 	{
 		void * rid=(void *)hashset_iterator_value(iter);
-		OKF("(%d) to=%p,to->B=%p",yk,to,to->B);
-		OKF("(%d) from=%p,from->B=%p, rid=%d",yk++,from,from->B,(int)(size_t)rid);
 		if(hashset_is_member(to->B,rid)){
 			FATAL("ERROR:The joint of record:%p and record %p contains %d, is not empty!",to,from,(int)(size_t)rid);
 		}
@@ -6146,7 +6145,6 @@ static inline void  merge_record(Record* to, Record* from)
 		map_set(&record_map, rid_str, to);
 	}
 
-	check_record("H");
 	//Merge Muations
 	for(int i=0;i<MUT_NUM;i++)
 	{
@@ -6177,7 +6175,6 @@ static inline void  merge_record(Record* to, Record* from)
 }
 static void record_value_changing_mutation(int ridlist[],int size)
 {
-	yk++;
 	if(size<=0){
 		FATAL("ridlist size must >0, cur:%d",size);
 	}
@@ -6191,9 +6188,6 @@ static void record_value_changing_mutation(int ridlist[],int size)
 	{
 		char key[16];
 		sprintf(key,"%d",ridlist[i]);
-		if(ridlist[i]==15103){
-			check_record("I");
-		}
 		void ** p=map_get(&record_map, key);
 		if(p){
 			Record *cur_r=*p;
@@ -6201,50 +6195,19 @@ static void record_value_changing_mutation(int ridlist[],int size)
 				tmp_r=cur_r;
 			}
 			if(cur_r!=tmp_r){
-				check_record("D");
 				merge_record((Record*)tmp_r,(Record*)cur_r);
-				check_record("C");
 			}
 		}
 	}
-	check_record("G");
 	if(tmp_r){//insert to the merged tmp_r
 		Record * r=tmp_r;
-
-		u8 * log_file_name=alloc_printf("%s/init_access_log.txt", out_dir);
-		int debug_fd = open(log_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
-		char * info=alloc_printf("(%d) Access r=%p,r->B=%p\n",yk,r,r->B);
-		OKF("%s",info);
-		ck_write(debug_fd, info, strlen(info), log_file_name);
-		close(debug_fd);
-		ck_free(info);
-		ck_free(log_file_name);
 
 		int origin_num=hashset_num_items(r->B);
 		int disjoint_sum=0;
 		int disjoint_cnt=0;
 		for(int i=0;i<size;i++){
-			if(ridlist[i]==15103){
-				WARNF("15103");
-			}
 			if(!hashset_is_member(r->B,(void *)(size_t)ridlist[i])){
 				hashset_add(r->B,(void *)(size_t)ridlist[i]);
-				if(ridlist[i]==15103){
-					int flag=0;
-					for(hashset_itr_t iter = hashset_iterator(r->B);hashset_iterator_has_next(iter);hashset_iterator_next(iter))
-					{
-						void * rid=(void *)hashset_iterator_value(iter);
-						WARNF("hashset rid=%d",(int)(size_t)rid);
-						if((int)(size_t)rid==15103){
-							flag=1;
-						}
-					}
-					if(!hashset_is_member(r->B, (void *)15103))
-					{
-						WARNF("Definitely error1");
-					}
-					if(!flag)FATAL("EEEEEEEEEEE 15103");
-				}
 				int index=rid2index[ridlist[i]];
 				if(vertex_index[index].distance<0){
 					FATAL("Unreachable BB rid:%d",ridlist[i]);
@@ -6285,48 +6248,14 @@ static void record_value_changing_mutation(int ridlist[],int size)
 				}
 			}
 		}
-		check_record("A");
 	}else{
-		check_record("F");
 		Record * r=(Record *)malloc(sizeof(Record));
 		r->B=hashset_create();
 		r->next=NULL;
-
-		u8 * log_file_name=alloc_printf("%s/init_access_log.txt", out_dir);
-		int debug_fd = open(log_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
-		char * info=alloc_printf("(%d) Init r=%p,r->B=%p\n",yk,r,r->B);
-		OKF("%s",info);
-		ck_write(debug_fd, info, strlen(info), log_file_name);
-		close(debug_fd);
-		ck_free(info);
-		ck_free(log_file_name);
 		double sum=0.0;
 		for(int i=0;i<size;i++)
 		{
-			if(ridlist[i]==15103){
-				OKF("Now 15103");
-				hashset_add(r->B,(void *)(size_t)ridlist[i]);
-			}else{
-				hashset_add(r->B,(void *)(size_t)ridlist[i]);
-			}
-			if(ridlist[i]==15103){
-				int flag=0;
-				hashset_itr_t iter = hashset_iterator(r->B);
-				while (hashset_iterator_has_next(iter))
-				{
-					void * rid=(void *)hashset_iterator_value(iter);
-					OKF("hashset rid=%d",(int)(size_t)rid);
-					if(15103==(int)(size_t)rid){
-						flag=1;
-					}
-					hashset_iterator_next(iter);
-				}
-				if(!hashset_is_member(r->B, (void *)15103))
-				{
-					WARNF("Definitely error");
-				}
-				if(!flag)FATAL("ERRRORORO 15103");
-			}
+			hashset_add(r->B,(void *)(size_t)ridlist[i]);
 			if(vertex_index[rid2index[ridlist[i]]].distance<0){
 				FATAL("Unreachable BB rid:%d",ridlist[i]);
 			}
@@ -6366,9 +6295,8 @@ static void record_value_changing_mutation(int ridlist[],int size)
 			r->next=record_list;
 			record_list=r;
 		}
-		check_record("B");
 	}
-/*
+	/*
 	u8 * log_file_name=alloc_printf("%s/records_log.txt", out_dir);
 	int debug_fd = open(log_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
 	int group_cnt=0;
@@ -6376,7 +6304,7 @@ static void record_value_changing_mutation(int ridlist[],int size)
 		char str[256];
 		char *ptr=str;
 		for(hashset_itr_t iter = hashset_iterator(r->B);hashset_iterator_has_next(iter);hashset_iterator_next(iter)){
-			int rid=(int)(unsigned long)hashset_iterator_value(iter);
+			int rid=(int)(size_t)hashset_iterator_value(iter);
 			int len=sprintf(ptr,"%d,",rid);
 			if(len<=0)FATAL("ERROR printing rids");
 			ptr+=len;
