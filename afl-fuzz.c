@@ -59,6 +59,8 @@
 /* add by yangke start */
 //#include <igraph.h>
 #include "map.h"
+#include "hashset.h"
+#include "hashset_itr.h"
 /* add by yangke end */
 
 #include <math.h>
@@ -318,6 +320,8 @@ static int margin_bb_rid[1<<16];
 static int margin_bb_count=0;
 static double min_d=1.7E+308;//min distance of margin basic block, initialize in loadCFG().
 static double max_d=0.0;//max distance of current margin basic block, initialize in loadCFG().
+static double min_gd=1.7E+308;//min distance of strong connected margin basic block group, initialize in record_value_changing_mutation().
+static double max_gd=0.0;//max distance of strong connected margin basic block group, initialize in record_value_changing_mutation().
 
 /* remember interesting mutaion operation and the operateed positions */
 
@@ -3346,9 +3350,18 @@ struct vertex_item{
 	//char nid[32];
 	//char key_str[1024];
 };
+struct record{
+	hashset_t B;
+	int  M[17];
+	map_int_t P;
+	double distance;
+	struct record * next;
+};
 
-
-
+typedef struct record Record;
+static Record * record_list=NULL;
+static map_void_t record_map;
+static int record_map_initialized=0;
 static struct vertex_item vertex_index[MAX_VERTEX_NUM];
 static int rid2index[MAX_VERTEX_NUM];
 u8 out_edge_cov_index[MAX_EDGE_NUM];//cov:1,uncov:0
@@ -3358,7 +3371,18 @@ static int edge_num=0;
 static int cfg_loaded=0;
 
 
-
+void destroy_records()
+{
+	map_deinit(&record_map);
+	Record *r;
+	while(record_list!=NULL){
+		r=record_list;
+		record_list=r->next;
+		hashset_destroy(r->B);
+		map_deinit(&r->P);
+		free(r);
+	}
+}
 void add_position(struct mutation * mut,int pos,int cnt)
 {
 	if (mut==NULL){
@@ -3481,7 +3505,8 @@ static void loadCFG() {
 		}
 		char *rid_str=strtok(tmp,"|");
 		int rid=atoi(rid_str);
-		char * nid=strtok(NULL,"|");
+		strtok(NULL,"|");
+		//char * nid=strtok(NULL,"|");
 		char * key_str=strtok(NULL,"|");
 		char * bbname=strtok(key_str,";");
 		if (strlen(bbname)==0)
@@ -3644,7 +3669,7 @@ static void update_margin_bbs()
 
 			if (virgin_bits[(start>>1)^end]==0xff && vertex_index[start_idx].cov==1){
 				if (vertex_index[start_idx].is_margin_last_check==0){//new margin found
-					/*
+
 					//DEBUG CODE
 					u8 *fn = alloc_printf("%s/%s",cfg_directory, "out_edge_index.dot");
 					FILE * f;
@@ -3655,10 +3680,12 @@ static void update_margin_bbs()
 					fseek(f,-2L,SEEK_END);
 					u8* node_str=alloc_printf("\n%d [label=\"%d\",color=Red ,shape=record];\n}",start,start);
 					fputs(node_str,f);
-					ck_free(node_str);
 					fclose(f);
+					ck_free(node_str);
+					ck_free(fn);
 					char *cmd=alloc_printf("dot -Tsvg %s/out_edge_index.dot -o %s/out_edge_index.svg",cfg_directory,cfg_directory);
-					system(cmd);*/
+					system(cmd);
+					ck_free(cmd);
 				}else{
 					//margin is still not solved
 					//current solving stratedy does not conquer the problem yet.
@@ -3763,9 +3790,11 @@ static inline void print_mutation_table2(int index)
 			u8 * info=alloc_printf("##%02d,%02d|%02d|%s%s\n",i,mut_score[i],mut_cnt[i],pos_list_str,get_description(i));
 			if (debug_fd < 0) PFATAL("Unable to create '%s'", log_file_name);
 			ck_write(debug_fd, info, strlen(info), log_file_name);
+			ck_free(info);
 		}
 	}
 	close(debug_fd);
+	ck_free(log_file_name);
 }
 static inline void print_mutation_table(int index)
 {
@@ -3792,9 +3821,11 @@ static inline void print_mutation_table(int index)
 			u8 * info=alloc_printf("##%02d,%02d|%02d|%s%s\n",i,mut_score[i],mut_cnt[i],pos_list_str,get_description(i));
 			if (debug_fd < 0) PFATAL("Unable to create '%s'", log_file_name);
 			ck_write(debug_fd, info, strlen(info), log_file_name);
+			ck_free(info);
 		}
 	}
 	close(debug_fd);
+	ck_free(log_file_name);
 }/*
 static inline void print_mutation_table_bak(int index)
 {
@@ -3842,7 +3873,7 @@ static inline void print_mutation_table_bak(int index)
 	}
 }*/
 /* add by yangke start */
-static inline void record_value_changing_mutation(int index,int weight);
+static inline void record_value_changing_mutation(int ridlist[],int size);
 static inline void record_value_changing_mutation2(int index,int weight);
 static inline void add_to_invlaid_positions(int index);
 static inline void cleanup_value_changing_mutation_record();
@@ -3877,30 +3908,29 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 		  int cnt=has_new_var_bits(virgin_var_bits,ridlist);
 		  char index_list_str[MAX_MUT_POS/4];
 		  char *ptr=index_list_str;
-		  for(int i=0;i<cnt;i++){
-			  int index=rid2index[ridlist[i]];
-			  //int l=sprintf(ptr,"(%d,%s),",ridlist[i],vertex_index[index].bbname);
-			  int l=sprintf(ptr,"%d,",ridlist[i]);
-			  ptr+=l;
-			  if(ptr-index_list_str>=MAX_MUT_POS/4){
-				  FATAL("ptr Overflow!:%p",ptr);
+		  if (cnt>0){
+			  for(int i=0;i<cnt;i++){
+				  //int index=rid2index[ridlist[i]];
+				  //int l=sprintf(ptr,"(%d,%s),",ridlist[i],vertex_index[index].bbname);
+				  int l=sprintf(ptr,"%d,",ridlist[i]);
+				  ptr+=l;
+				  if(ptr-index_list_str>=MAX_MUT_POS/4){
+					  FATAL("ptr Overflow!:%p",ptr);
+				  }
 			  }
-			  //record_value_changing_mutation(index,1);//muts recognized in this place has lower quality=1
 			  if(!mut_prior_mode){
 				  mut_prior_mode=1;//OKF("Switch to mut_prior_mode!");
 			  }
-		  }
-
-		  if (cnt>0){
 			  WARNF("%d affected branch:%s\n",cnt,index_list_str);
-			  record_value_changing_mutation(-1,1);
+			  record_value_changing_mutation(ridlist,cnt);
 			  u8 * log_file_name=alloc_printf("%s/value_affected_branch.txt", out_dir);
 		      u8 * info=alloc_printf("%d affected branch:%s,margin_bb_count:%d\n",cnt,index_list_str,margin_bb_count);
 		      int debug_fd = open(log_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
 		      if (debug_fd < 0) PFATAL("Unable to create '%s'", log_file_name);
 		      ck_write(debug_fd, info, strlen(info), log_file_name);
 		      close(debug_fd);
-
+		      ck_free(info);
+		      ck_free(log_file_name);
 		  }else{
 			  /*for(int i=0;i<margin_bb_count;i++)
 			  {
@@ -4160,6 +4190,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 	  destroy_queue();
 	  destroy_extras();
 	  destroy_vertex_index();
+	  destroy_records();
 	  ck_free(target_path);
 	  ck_free(sync_id);
 
@@ -5973,7 +6004,8 @@ static inline void add_to_invlaid_positions(int index)
 						*cnt+=tmp_mut[i][j];
 						if(*cnt<0)
 							FATAL("Integer Overflow!*cnt=%d",*cnt);
-						int *cnt2=map_get(vertex_index[index].invalid_positions, pos_str);
+						map_get(vertex_index[index].invalid_positions, pos_str);
+						//int *cnt2=map_get(vertex_index[index].invalid_positions, pos_str);
 						//OKF("prev cnt:%d,updated cnt:%d",x,*cnt2);
 					}else{
 						map_set(vertex_index[index].invalid_positions, pos_str, tmp_mut[i][j]);
@@ -5987,52 +6019,6 @@ static inline void add_to_invlaid_positions(int index)
 				}
 			}
 		}
-	}
-}
-static inline void record_value_changing_mutation(int index,int quality)
-{
-	//quality=1 :margin branch var changed
-	//quality=2 :new path
-	for(int i=0;i<MUT_NUM;i++)
-	{
-		if(tmp_mut_cnt[i]>0)
-		{
-			mut_cnt[i]+=tmp_mut_cnt[i];
-			/*struct mutation * m=malloc(sizeof(struct mutation));
-			m->code=i;
-			m->cnt=tmp_mut_cnt[i]*quality;//OKF("add tmp_mut_cnt %d",tmp_mut_cnt[i]);
-			m->pos_list=NULL;
-			m->next=NULL;*/
-			char pos_list_str[MAX_MUT_POS/16]={0};//256 ///TODO:delete
-			char *ptr=pos_list_str;///TODO:delete
-			for(int j=0;j<MAX_MUT_POS;j++)
-			{
-				if(tmp_mut[i][j]>0)
-				{
-					/* TODO:delete start */
-					mut[i][j]+=tmp_mut[i][j];
-					int len=sprintf(ptr,"%d,",j);
-					if(len>0){
-						ptr+=len;
-						if(ptr-pos_list_str==MAX_MUT_POS/4){
-							FATAL("Buffer Overflow! in record_value_changing_mutation()");
-						}
-					}else{
-						FATAL("sprintf FAILED! in record_value_changing_mutation()");
-					}
-					/* TODO:delete end */
-					///add_position(m,j,tmp_mut[i][j]*quality);
-				}
-			}
-			///add_mutation(index,m);
-			total_monitored_mut_cnt+=tmp_mut_cnt[i];
-		}
-	}
-	if(index<0||vertex_index[index].rid==38124)
-	{
-		  //WARNF("DEBUG for libturbojpeg jdmarker:659 FIND MUT THAT AFFECT TARGET BB!");
-		  WARNF("DEBUG for maze.c:106!");
-		  print_mutation_table(index);
 	}
 }
 static inline void record_value_changing_mutation2(int index,int quality)
@@ -6078,8 +6064,332 @@ static inline void record_value_changing_mutation2(int index,int quality)
 	{
 		  //WARNF("DEBUG for libturbojpeg jdmarker:659 FIND MUT THAT AFFECT TARGET BB!");
 		  WARNF("DEBUG for maze.c:106!");
-		  print_mutation_table2(index);
+		  print_mutation_table(index);
 	}
+}
+static int yk=0;
+static int chcnt=0;
+static void check_record(char * mark)//all values in record_map must be records in record_list
+{chcnt++;
+	const char *key;
+	map_iter_t iter = map_iter(&record_map);
+	u8 * log_file_name=alloc_printf("%s/check_log.txt", out_dir);
+	int debug_fd = open(log_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
+	char * info=alloc_printf("=----------%s----------=\n",mark);
+	OKF("=----------%s----------=",mark);
+	ck_write(debug_fd, info, strlen(info), log_file_name);
+	ck_free(info);
+	while ((key = map_next(&record_map, &iter))) {
+		void **p=map_get(&record_map, key);
+		Record *cur_r=*p;
+
+		char rid_list_str[256];
+		char *ptr=rid_list_str;
+		for(hashset_itr_t iter = hashset_iterator(cur_r->B);hashset_iterator_has_next(iter);hashset_iterator_next(iter))
+		{
+			void * rid=(void *)hashset_iterator_value(iter);
+			ptr+=sprintf(ptr,"%d,",(int)(size_t)rid);
+		}
+		info=alloc_printf("%s -> %p,%s\n", key, *p,rid_list_str);
+		OKF("%s -> %p,%s", key, *p,rid_list_str);
+		ck_write(debug_fd, info, strlen(info), log_file_name);
+		ck_free(info);
+
+		Record * it_r;
+		for(it_r=record_list;it_r!=NULL&&it_r!=cur_r;it_r=it_r->next);
+		if(it_r==NULL&&record_list!=NULL)FATAL("(%d) %s Not in record_list %s -> %p",chcnt,info,key,cur_r);
+	}
+	close(debug_fd);
+	ck_free(log_file_name);
+}
+static inline void  merge_record(Record* to, Record* from)
+{
+	if(!record_list||!to||!from||to==from){
+		FATAL("EROOR record_list=%p,from=%p,to=%p",record_list,to,from);
+	}
+	//Refine link list
+	Record * test_r;
+	for(test_r=record_list;test_r!=NULL&&test_r!=to;test_r=test_r->next);//SIGSEGV if to not in record_list
+	if(test_r==NULL)FATAL("Not in record_list to=%p",to);
+	//check_record();//all value in record_map must be in record_list
+
+	if(record_list==from)
+	{
+		record_list=record_list->next;
+	}else{
+		Record* prev;
+		for(prev=record_list;prev!=NULL&&prev->next!=from;prev=prev->next);//SIGSEGV if from not in record_list
+		if(prev==NULL)FATAL("Not in record_list from=%p",from);
+		prev->next=from->next;
+	}
+
+
+
+	//Merge distances
+	int to_num=hashset_num_items(to->B);
+	int from_num=hashset_num_items(from->B);
+	to->distance=(from_num*from->distance+to_num*to->distance)/(from_num+to_num);
+
+
+	//Merge Branches
+	for(hashset_itr_t iter = hashset_iterator(from->B);hashset_iterator_has_next(iter);hashset_iterator_next(iter))
+	{
+		void * rid=(void *)hashset_iterator_value(iter);
+		OKF("(%d) to=%p,to->B=%p",yk,to,to->B);
+		OKF("(%d) from=%p,from->B=%p, rid=%d",yk++,from,from->B,(int)(size_t)rid);
+		if(hashset_is_member(to->B,rid)){
+			FATAL("ERROR:The joint of record:%p and record %p contains %d, is not empty!",to,from,(int)(size_t)rid);
+		}
+		hashset_add(to->B, rid);
+		char rid_str[16];
+		sprintf(rid_str,"%d",(int)(size_t)rid);
+		map_set(&record_map, rid_str, to);
+	}
+
+	check_record("H");
+	//Merge Muations
+	for(int i=0;i<MUT_NUM;i++)
+	{
+		if(from->M[i]>0)
+		{
+			to->M[i]+=from->M[i];
+		}
+	}
+	//Merge Positions
+	map_iter_t pos_iter = map_iter(&from->P);
+	const char *pos=NULL;
+	while ((pos = map_next(&from->P, &pos_iter))) {
+		int * cnt_to=map_get(&to->P, pos);
+		int * cnt_from=map_get(&from->P, pos);
+		if(!cnt_from)FATAL("Weird ERROR!");
+		if(cnt_to)
+		{
+			map_set(&to->P, pos, *cnt_to+*cnt_from);
+		}else{
+			map_set(&to->P, pos, *cnt_from);
+		}
+	}
+	//destroy_record(from)
+	hashset_destroy(from->B);
+	map_deinit(&from->P);
+	from->next=NULL;//clear memory
+	free(from);
+}
+static void record_value_changing_mutation(int ridlist[],int size)
+{
+	yk++;
+	if(size<=0){
+		FATAL("ridlist size must >0, cur:%d",size);
+	}
+	if(!record_map_initialized)
+	{
+		map_init(&record_map);
+		record_map_initialized=1;
+	}
+	Record * tmp_r=NULL;
+	for(int i=0;i<size;i++)
+	{
+		char key[16];
+		sprintf(key,"%d",ridlist[i]);
+		if(ridlist[i]==15103){
+			check_record("I");
+		}
+		void ** p=map_get(&record_map, key);
+		if(p){
+			Record *cur_r=*p;
+			if(!tmp_r){
+				tmp_r=cur_r;
+			}
+			if(cur_r!=tmp_r){
+				check_record("D");
+				merge_record((Record*)tmp_r,(Record*)cur_r);
+				check_record("C");
+			}
+		}
+	}
+	check_record("G");
+	if(tmp_r){//insert to the merged tmp_r
+		Record * r=tmp_r;
+
+		u8 * log_file_name=alloc_printf("%s/init_access_log.txt", out_dir);
+		int debug_fd = open(log_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
+		char * info=alloc_printf("(%d) Access r=%p,r->B=%p\n",yk,r,r->B);
+		OKF("%s",info);
+		ck_write(debug_fd, info, strlen(info), log_file_name);
+		close(debug_fd);
+		ck_free(info);
+		ck_free(log_file_name);
+
+		int origin_num=hashset_num_items(r->B);
+		int disjoint_sum=0;
+		int disjoint_cnt=0;
+		for(int i=0;i<size;i++){
+			if(ridlist[i]==15103){
+				WARNF("15103");
+			}
+			if(!hashset_is_member(r->B,(void *)(size_t)ridlist[i])){
+				hashset_add(r->B,(void *)(size_t)ridlist[i]);
+				if(ridlist[i]==15103){
+					int flag=0;
+					for(hashset_itr_t iter = hashset_iterator(r->B);hashset_iterator_has_next(iter);hashset_iterator_next(iter))
+					{
+						void * rid=(void *)hashset_iterator_value(iter);
+						WARNF("hashset rid=%d",(int)(size_t)rid);
+						if((int)(size_t)rid==15103){
+							flag=1;
+						}
+					}
+					if(!hashset_is_member(r->B, (void *)15103))
+					{
+						WARNF("Definitely error1");
+					}
+					if(!flag)FATAL("EEEEEEEEEEE 15103");
+				}
+				int index=rid2index[ridlist[i]];
+				if(vertex_index[index].distance<0){
+					FATAL("Unreachable BB rid:%d",ridlist[i]);
+				}
+				char rid_str[16];
+				sprintf(rid_str,"%d",ridlist[i]);
+				map_set(&record_map, rid_str, r);
+				disjoint_sum+=vertex_index[index].distance;
+				disjoint_cnt++;
+			}
+		}
+		r->distance=(r->distance*origin_num+disjoint_sum)/(origin_num+disjoint_cnt);
+		if(r->distance<min_gd){
+			min_gd=r->distance;
+		}
+		if(r->distance>max_gd){
+			max_gd=r->distance;
+		}
+		for(int i=0;i<MUT_NUM;i++)
+		{
+			if(tmp_mut_cnt[i]>0)
+			{
+				r->M[i]+=tmp_mut_cnt[i];
+				for(int j=0;j<MAX_MUT_POS;j++)
+				{
+					if(tmp_mut[i][j]>0)
+					{
+						char * key=alloc_printf("%d",j);
+						int *cnt=map_get(&r->P, key);
+						ck_free(key);
+						if(cnt)
+						{
+							map_set(&r->P, key,*cnt+tmp_mut[i][j]);
+						}else{
+							map_set(&r->P, key, tmp_mut[i][j]);
+						}
+					}
+				}
+			}
+		}
+		check_record("A");
+	}else{
+		check_record("F");
+		Record * r=(Record *)malloc(sizeof(Record));
+		r->B=hashset_create();
+		r->next=NULL;
+
+		u8 * log_file_name=alloc_printf("%s/init_access_log.txt", out_dir);
+		int debug_fd = open(log_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
+		char * info=alloc_printf("(%d) Init r=%p,r->B=%p\n",yk,r,r->B);
+		OKF("%s",info);
+		ck_write(debug_fd, info, strlen(info), log_file_name);
+		close(debug_fd);
+		ck_free(info);
+		ck_free(log_file_name);
+		double sum=0.0;
+		for(int i=0;i<size;i++)
+		{
+			if(ridlist[i]==15103){
+				OKF("Now 15103");
+				hashset_add(r->B,(void *)(size_t)ridlist[i]);
+			}else{
+				hashset_add(r->B,(void *)(size_t)ridlist[i]);
+			}
+			if(ridlist[i]==15103){
+				int flag=0;
+				hashset_itr_t iter = hashset_iterator(r->B);
+				while (hashset_iterator_has_next(iter))
+				{
+					void * rid=(void *)hashset_iterator_value(iter);
+					OKF("hashset rid=%d",(int)(size_t)rid);
+					if(15103==(int)(size_t)rid){
+						flag=1;
+					}
+					hashset_iterator_next(iter);
+				}
+				if(!hashset_is_member(r->B, (void *)15103))
+				{
+					WARNF("Definitely error");
+				}
+				if(!flag)FATAL("ERRRORORO 15103");
+			}
+			if(vertex_index[rid2index[ridlist[i]]].distance<0){
+				FATAL("Unreachable BB rid:%d",ridlist[i]);
+			}
+			char rid_str[16];
+			sprintf(rid_str,"%d",ridlist[i]);
+			map_set(&record_map, rid_str, r);
+			sum+=vertex_index[rid2index[ridlist[i]]].distance;
+		}
+		r->distance=sum/size;
+		if(r->distance<min_gd){
+			min_gd=r->distance;
+		}
+		if(r->distance>max_gd){
+			max_gd=r->distance;
+		}
+		map_init(&(r->P));
+		memset(r->M,0,sizeof(int)*17);
+		for(int i=0;i<MUT_NUM;i++)
+		{
+			if(tmp_mut_cnt[i]>0)
+			{
+				r->M[i]+=tmp_mut_cnt[i];
+				for(int j=0;j<MAX_MUT_POS;j++)
+				{
+					if(tmp_mut[i][j]>0)
+					{
+						char * key=alloc_printf("%d",j);
+						map_set(&(r->P), key, tmp_mut[i][j]);
+						ck_free(key);
+					}
+				}
+			}
+		}
+		if(record_list==NULL){
+			record_list=r;
+		}else{
+			r->next=record_list;
+			record_list=r;
+		}
+		check_record("B");
+	}
+/*
+	u8 * log_file_name=alloc_printf("%s/records_log.txt", out_dir);
+	int debug_fd = open(log_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
+	int group_cnt=0;
+	for(Record * r=record_list;r!=NULL;r=r->next,group_cnt++){
+		char str[256];
+		char *ptr=str;
+		for(hashset_itr_t iter = hashset_iterator(r->B);hashset_iterator_has_next(iter);hashset_iterator_next(iter)){
+			int rid=(int)(unsigned long)hashset_iterator_value(iter);
+			int len=sprintf(ptr,"%d,",rid);
+			if(len<=0)FATAL("ERROR printing rids");
+			ptr+=len;
+			if(ptr>=str+256)FATAL("Overflow when printing rids");
+		}
+		char info[300];
+		sprintf(info,"Group[%d]:%s,%f",group_cnt,str,r->distance);
+		OKF("%s",info);
+		ck_write(debug_fd, info, strlen(info), log_file_name);
+	}
+	close(debug_fd);
+	ck_free(log_file_name);*/
+	//OKF("Margin BB Groups:%d",groups);
 }
 static inline void record_possible_value_changing_mutation(int index, int pos)
 {
@@ -6129,7 +6439,6 @@ static inline int binary_search(const int values[],int len,int query_value){
 }
 static inline void dispatch_random_bak(u32 range,u32 * arg)
 {
-
 	int rand=UR(100);
     if (mut_prior_mode==1 && rand<VALUE_CHANGE_STRATEGY_BOUND){//75%
     	if (margin_bb_count==0){//make sure margin_bb has been calculated
@@ -6242,6 +6551,112 @@ random:
 	return;
 }
 static inline void dispatch_random(u32 range,u32 * arg)
+{//dai xie
+	arg[0]=-1;
+	arg[1]=-1;
+	if (mut_prior_mode)
+	{
+		if(record_list)
+		{
+			//check if there exists an margin BB with distance==min_d
+			//and we do not have corresponding variable impacting records.
+			//if so we go to random
+			for(int i=0;i<margin_bb_count;i++)
+			{
+				int rid=margin_bb_rid[i];
+				int index=rid2index[rid];
+				if(vertex_index[index].distance==min_d)
+				{
+					char rid_str[16];
+					sprintf(rid_str,"%d",rid);
+					if(!map_get(&record_map,rid_str))
+					{
+						goto random;
+					}
+				}
+			}
+			double sum=0;
+			Record *r;
+			for(r =record_list;r!=NULL;r=r->next)
+			{
+				sum+=max_gd-r->distance+1;
+			}
+			int rand0=UR((int)(sum*100));
+			double sum2=0;
+			for(r =record_list;r!=NULL;r=r->next)
+			{
+				sum2+=max_gd-r->distance+1;
+				if(sum2*100>=rand0){
+					break;//we select a record "r"
+				}
+			}
+			int valid_mut[MUT_NUM];
+			int bound_values[MUT_NUM];
+			int valid_mut_cnt=0;
+			int sum3=0;
+
+			int perfect_mut[MUT_NUM];
+			int perfect_mut_cnt=0;
+
+			for(int i=1;i<MUT_NUM;i++)
+			{
+				if(mut_score[i]>=r->M[i]&&mut_score[i]>1)//define the validity of mutator
+				{
+					perfect_mut[perfect_mut_cnt]=i;
+					perfect_mut_cnt++;
+				}
+				if(mut_score[i]>0){//need improve to link list
+					valid_mut[valid_mut_cnt]=i;//mut code
+					sum3+=mut_score[i];
+					bound_values[valid_mut_cnt]=sum3;//bounds which refer to index possibility in x axis
+					valid_mut_cnt++;
+				}
+			}
+			int rand=UR(100);
+			if (mut_prior_mode==1 && valid_mut_cnt>0 && rand<VALUE_CHANGE_STRATEGY_BOUND){//75%
+				if(perfect_mut_cnt>0){
+					arg[0]=perfect_mut[UR(perfect_mut_cnt)];
+				}else{
+					int index=binary_search(bound_values,valid_mut_cnt,UR(sum3));
+					arg[0]=valid_mut[index];
+					//arg[0]=valid_mut[UR(valid_mut_cnt)];
+				}
+
+				int sum4=0;
+				const char *key;
+				map_iter_t iter = map_iter(&r->P);
+
+				while ((key = map_next(&r->P, &iter))) {
+					int cnt=(int)(size_t)(*map_get(&r->P, key));
+					//OKF("%s -> %d", key, cnt);
+					sum4+=cnt;
+				}
+				int rand2=UR(sum4);
+				sum4=0;
+				iter = map_iter(&r->P);
+				while ((key = map_next(&r->P, &iter))) {
+					int cnt=(int)(size_t)(*map_get(&r->P, key));
+					sum4+=cnt;
+					if(sum4>=rand2){
+						//OKF("=>%s -> %d", key, cnt);
+						break;
+					}
+				}
+				arg[1]=atoi(key);
+			}
+		}
+	}
+	if(arg[0]==-1){
+random:
+		arg[0]=UR(range);
+		//arg[1]=-1;
+		random_mut++;
+	}else{
+		monitor_mut++;
+	}
+}
+
+static inline void dispatch_random_bak_bak(u32 range,u32 * arg)
 {
 	int valid_mut[MUT_NUM];
 	int bound_values[MUT_NUM];
@@ -6281,7 +6696,8 @@ static inline void dispatch_random(u32 range,u32 * arg)
 		{
 			if(mut_score[i]>=mut_cnt[i]&&mut_score[i]>1)//define the validity of mutator
 			{
-				perfect_mut[perfect_mut_cnt++]=i;
+				perfect_mut[perfect_mut_cnt]=i;
+				perfect_mut_cnt++;
 			}
 			if(mut_score[i]>0){
 				valid_mut[valid_mut_cnt]=i;//mut code
@@ -9828,6 +10244,7 @@ stop_fuzzing:
   destroy_queue();
   destroy_extras();
   destroy_vertex_index();
+  destroy_records();
   ck_free(target_path);
   ck_free(sync_id);
 

@@ -118,15 +118,15 @@ if [ -f $TIME_RECORD_FILE ];then
 	rm $TIME_RECORD_FILE
 fi
 
-ITER=20
+ITER=1
 for((i=1;i<=$((ITER));i++));  
 do
 if [ -d $DIR_OUT ]; then
 	rm -rf $DIR_OUT
 fi
 if [[ $AFLGO == *good ]];then
-	#gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR -x $AFLGO/dictionaries/jpeg.dict $SUBJECT/${TARGET}_profiled @@
-	/usr/bin/time -a -o $TIME_RECORD_FILE $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR -x $AFLGO/dictionaries/jpeg.dict $SUBJECT/${TARGET}_profiled @@
+	gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR -x $AFLGO/dictionaries/jpeg.dict $SUBJECT/${TARGET}_profiled @@
+	#/usr/bin/time -a -o $TIME_RECORD_FILE $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR -x $AFLGO/dictionaries/jpeg.dict $SUBJECT/${TARGET}_profiled @@
 elif [[ $AFLGO == *origin ]];then
 	#gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -x $AFLGO/dictionaries/jpeg.dict $SUBJECT/${TARGET}_profiled @@
 	/usr/bin/time -a -o $TIME_RECORD_FILE $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -x $AFLGO/dictionaries/jpeg.dict $SUBJECT/${TARGET}_profiled @@
