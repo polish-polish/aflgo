@@ -3922,7 +3922,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 				  mut_prior_mode=1;//OKF("Switch to mut_prior_mode!");
 			  }
 			  WARNF("%d affected branch:%s\n",cnt,index_list_str);
-			  record_value_changing_mutation(ridlist,cnt);
+			  record_value_changing_mutation(ridlist,cnt);/*
 			  u8 * log_file_name=alloc_printf("%s/value_affected_branch.txt", out_dir);
 		      u8 * info=alloc_printf("%d affected branch:%s,margin_bb_count:%d\n",cnt,index_list_str,margin_bb_count);
 		      int debug_fd = open(log_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
@@ -3930,7 +3930,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 		      ck_write(debug_fd, info, strlen(info), log_file_name);
 		      close(debug_fd);
 		      ck_free(info);
-		      ck_free(log_file_name);
+		      ck_free(log_file_name);*/
 		  }else{
 			  /*for(int i=0;i<margin_bb_count;i++)
 			  {
@@ -3979,6 +3979,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 				threshold_cycles_wo_finds=INIT_THRESHOLD_CYCLES_WO_FINDS;
 			}
 			max_mut_loop_bound=INIT_MUT_LOOP_BOUND;
+
 			/*
 			if (!cfg_loaded)
 						  loadCFG();
@@ -4012,7 +4013,9 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 					  */
 
 			//t1=t2=t3=0;
-			cleanup_value_changing_mutation_record();
+			if (cycles_wo_finds >3){
+				cleanup_value_changing_mutation_record();
+			}
 			/*
     		if (!cfg_loaded)
     			loadCFG();
@@ -5918,6 +5921,8 @@ static inline void cleanup_value_changing_mutation_record()
 			mut[i][j]=0;
 		}
 	}
+	destroy_records();
+	map_init(&record_map);
 }
 //static inline void cleanup_value_changing_mutation_record()
 //{
@@ -6116,6 +6121,12 @@ static inline void  merge_record(Record* to, Record* from)
 	if(!record_list||!to||!from||to==from){
 		FATAL("EROOR record_list=%p,from=%p,to=%p",record_list,to,from);
 	}
+	if(record_list!=to)
+	{
+		Record* prev;
+		for(prev=record_list;prev!=NULL&&prev->next!=to;prev=prev->next);//SIGSEGV if from not in record_list
+		if(prev==NULL)FATAL("Not in record_list to=%p",from);
+	}
 	if(record_list==from)
 	{
 		record_list=record_list->next;
@@ -6231,6 +6242,7 @@ static void record_value_changing_mutation(int ridlist[],int size)
 			if(tmp_mut_cnt[i]>0)
 			{
 				r->M[i]+=tmp_mut_cnt[i];
+				mut_cnt[i]+=tmp_mut_cnt[i];
 				for(int j=0;j<MAX_MUT_POS;j++)
 				{
 					if(tmp_mut[i][j]>0)
@@ -6244,6 +6256,7 @@ static void record_value_changing_mutation(int ridlist[],int size)
 						}else{
 							map_set(&r->P, key, tmp_mut[i][j]);
 						}
+						mut[i][j]+=tmp_mut[i][j];
 					}
 				}
 			}
@@ -6278,13 +6291,15 @@ static void record_value_changing_mutation(int ridlist[],int size)
 			if(tmp_mut_cnt[i]>0)
 			{
 				r->M[i]+=tmp_mut_cnt[i];
+				mut_cnt[i]+=tmp_mut_cnt[i];
 				for(int j=0;j<MAX_MUT_POS;j++)
 				{
 					if(tmp_mut[i][j]>0)
 					{
 						char * key=alloc_printf("%d",j);
-						map_set(&(r->P), key, tmp_mut[i][j]);
+						map_set(&r->P, key, tmp_mut[i][j]);
 						ck_free(key);
+						mut[i][j]+=tmp_mut[i][j];
 					}
 				}
 			}
@@ -6296,6 +6311,7 @@ static void record_value_changing_mutation(int ridlist[],int size)
 			record_list=r;
 		}
 	}
+	print_mutation_table(-1);
 	/*
 	u8 * log_file_name=alloc_printf("%s/records_log.txt", out_dir);
 	int debug_fd = open(log_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
@@ -6478,7 +6494,10 @@ random:
 	random_mut++;
 	return;
 }
-static inline void dispatch_random(u32 range,u32 * arg)
+static int pos_search_mode=0;
+static int pos_inc=0;
+static int search_round=0;
+static inline void dispatch_random(u32 range,s32 len,u32 * arg)
 {//dai xie
 	arg[0]=-1;
 	arg[1]=-1;
@@ -6488,7 +6507,7 @@ static inline void dispatch_random(u32 range,u32 * arg)
 		{
 			//check if there exists an margin BB with distance==min_d
 			//and we do not have corresponding variable impacting records.
-			//if so we go to random
+			//if so we use mutation 10 to linearly search for good position(or random(currently comment out))
 			for(int i=0;i<margin_bb_count;i++)
 			{
 				int rid=margin_bb_rid[i];
@@ -6500,21 +6519,44 @@ static inline void dispatch_random(u32 range,u32 * arg)
 					if(!map_get(&record_map,rid_str))
 					{
 						goto random;
+						if(!pos_search_mode)
+						{
+							pos_search_mode=1;
+							pos_inc=0;
+							arg[0]=10;
+							arg[1]=pos_inc++;
+							OKF("###########pos=%d",arg[1]);
+							return;
+						}else if (pos_inc<len){
+							arg[0]=10;
+							arg[1]=pos_inc++;
+							return;
+						}/*else if(search_round<3){
+							search_round++;
+							pos_inc=0;
+							arg[0]=10;
+							arg[1]=pos_inc++;
+						}*/else{
+							goto random;
+						}
 					}
 				}
 			}
+			pos_search_mode=0;
 			double sum=0;
 			Record *r;
 			for(r =record_list;r!=NULL;r=r->next)
 			{
-				sum+=max_gd-r->distance+1;
+				//sum+=(max_gd-r->distance+1);
+				sum+=200/(r->distance+1)+1;
 			}
-			int rand0=UR((int)(sum*100));
+			int rand0=UR((int)(sum));
 			double sum2=0;
 			for(r =record_list;r!=NULL;r=r->next)
 			{
-				sum2+=max_gd-r->distance+1;
-				if(sum2*100>=rand0){
+				//sum2+=(max_gd-r->distance+1);
+				sum2+=200/(r->distance+1)+1;
+				if(sum2>=rand0){
 					break;//we select a record "r"
 				}
 			}
@@ -6525,10 +6567,22 @@ static inline void dispatch_random(u32 range,u32 * arg)
 
 			int perfect_mut[MUT_NUM];
 			int perfect_mut_cnt=0;
+			/*float average=0;
+			int _cnt=0;
+			for(int i=1;i<MUT_NUM;i++)
+			{
+				if(mut_score[i]>0)
+				{
+					average+=mut_score[i];
+					_cnt++;
+				}
+			}
+			average=average/_cnt;*/
 
 			for(int i=1;i<MUT_NUM;i++)
 			{
-				if(mut_score[i]>=r->M[i]&&mut_score[i]>1)//define the validity of mutator
+				//if(mut_score[i]>=r->M[i]&&mut_score[i]>1)//define the validity of mutator
+				if(mut_score[i]>=mut_cnt[i]&&mut_score[i]>1)
 				{
 					perfect_mut[perfect_mut_cnt]=i;
 					perfect_mut_cnt++;
@@ -6542,14 +6596,17 @@ static inline void dispatch_random(u32 range,u32 * arg)
 			}
 			int rand=UR(100);
 			if (mut_prior_mode==1 && valid_mut_cnt>0 && rand<VALUE_CHANGE_STRATEGY_BOUND){//75%
-				if(perfect_mut_cnt>0){
+				//select mutation
+				if(perfect_mut_cnt>0 && rand<55){
 					arg[0]=perfect_mut[UR(perfect_mut_cnt)];
-				}else{
+				}else if(rand < 70){
 					int index=binary_search(bound_values,valid_mut_cnt,UR(sum3));
 					arg[0]=valid_mut[index];
 					//arg[0]=valid_mut[UR(valid_mut_cnt)];
+				}else{
+					arg[0]=UR(range);
 				}
-
+				//select position
 				int sum4=0;
 				const char *key;
 				map_iter_t iter = map_iter(&r->P);
@@ -6570,6 +6627,15 @@ static inline void dispatch_random(u32 range,u32 * arg)
 						break;
 					}
 				}
+				/*
+				int fuzz=UR(10);
+				if(fuzz>80){
+					fuzz=1;
+				}else if(fuzz>70){
+					fuzz=-1;
+				}else{
+					fuzz=0;
+				}*/
 				arg[1]=atoi(key);
 			}
 		}
@@ -7955,7 +8021,7 @@ havoc_stage:
       u32 arg[2];//to store opcode and pos
       //if(mut_prior_mode){
       if(cycles_wo_finds >=threshold_cycles_wo_finds){
-    	 dispatch_random(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0),arg);
+    	 dispatch_random(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0),temp_len,arg);
     	 record_mutation(arg[0]);
       }else{
     	 arg[0]=UR(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0));//original AFLGO setting
