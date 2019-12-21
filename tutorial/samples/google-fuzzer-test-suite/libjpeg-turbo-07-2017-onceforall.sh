@@ -6,6 +6,7 @@ TEST_SUITE_DIR=$WORK/fuzzer-test-suite
 
 if [ "$1" == "good" ];then
 AFLGO=/home/yangke/Program/AFL/aflgo/bak/aflgo-good
+cd $AFLGO && make && cd -
 DOWNLOAD_DIR=$WORK/build_good_${NAME}
 elif [ "$1" == "bad" ];then
 AFLGO=/home/yangke/Program/AFL/aflgo/bak/aflgo-origin

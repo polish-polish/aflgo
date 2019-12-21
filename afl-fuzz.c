@@ -3345,6 +3345,7 @@ struct vertex_item{
 	u8 is_margin;//yes:1,no:0
 	u8 is_margin_last_check;
 	u16 margin_history;
+	u8 state_based;
 	struct mutation *mut_list;
 	map_int_t * invalid_positions;
 	//char nid[32];
@@ -3523,6 +3524,7 @@ static void loadCFG() {
 		vertex_index[vertex_num].is_margin=0;
 		vertex_index[vertex_num].is_margin_last_check=0;
 		vertex_index[vertex_num].margin_history=0;
+		vertex_index[vertex_num].state_based=0;
 		vertex_index[vertex_num].mut_list=NULL;
 		vertex_index[vertex_num].invalid_positions=NULL;
 		rid2index[rid]=vertex_num;
@@ -3629,6 +3631,8 @@ static void loadCFG() {
 /* prioritize Basic Blocks(idendified by random id(RID)) located at the margin
  * area of the covered code.
  */
+static int target_index=-1;
+static int need_start_compaign=0;
 
 static void update_margin_bbs()
 {
@@ -3697,14 +3701,22 @@ static void update_margin_bbs()
 
 		}
 	}
-
+	int min_d_index=-1;
+	double new_min_d=1.7E+308;
 	for (int i=0;i<margin_bb_count;i++)
 	{
 		double it_d=vertex_index[rid2index[margin_bb_rid[i]]].distance;
-		if(it_d<min_d)
-			min_d=it_d;
+		if(it_d<min_d){
+			new_min_d=it_d;
+			min_d_index=rid2index[margin_bb_rid[i]];
+		}
 		if(it_d>max_d)
 			max_d=it_d;
+	}
+	if(new_min_d<min_d){
+		min_d=new_min_d;
+		need_start_compaign=1;
+		target_index=min_d_index;
 	}
 	//FATAL("KILL BY YANGKE update_margin_bbs.");
 }
@@ -3877,6 +3889,7 @@ static inline void record_value_changing_mutation(int ridlist[],int size);
 static inline void record_value_changing_mutation2(int index,int weight);
 static inline void add_to_invlaid_positions(int index);
 static inline void cleanup_value_changing_mutation_record();
+static int branch_attack_mode=0;
 
 /* add by yangke end */
 
@@ -3921,8 +3934,9 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 			  if(!mut_prior_mode){
 				  mut_prior_mode=1;//OKF("Switch to mut_prior_mode!");
 			  }
-			  WARNF("%d affected branch:%s\n",cnt,index_list_str);
-			  record_value_changing_mutation(ridlist,cnt);/*
+			  //WARNF("%d affected branch:%s\n",cnt,index_list_str);
+			  record_value_changing_mutation(ridlist,cnt);
+			  /*
 			  u8 * log_file_name=alloc_printf("%s/value_affected_branch.txt", out_dir);
 		      u8 * info=alloc_printf("%d affected branch:%s,margin_bb_count:%d\n",cnt,index_list_str,margin_bb_count);
 		      int debug_fd = open(log_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
@@ -3932,6 +3946,23 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 		      ck_free(info);
 		      ck_free(log_file_name);*/
 		  }else{
+			  if (!branch_attack_mode && target_index!=-1 && !vertex_index[target_index].state_based &&  cycles_wo_finds >=len*10){
+				  /*char str[1024];
+				  char *ptr=str;
+				  for(int i=0;i<vertex_num;i++)
+				  {
+					  //vertex_index[target_index].rid
+					  ptr+=sprintf(ptr,"%d",vertex_index[i].state_based);
+				  }
+				  OKF("%d:0,%s",vertex_index[target_index].rid,str);*/
+				  vertex_index[target_index].state_based=1;
+				  //cleanup_value_changing_mutation_record();
+				  /*char key[10];
+				  sprintf(key,"%d",vertex_index[target_index].rid);
+				  if(record_list||map_get(&record_map,key)){
+					  FATAL("error");
+				  }*/
+			  }
 			  /*for(int i=0;i<margin_bb_count;i++)
 			  {
 				  int index=rid2index[margin_bb_rid[i]];
@@ -3980,41 +4011,45 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 			}
 			max_mut_loop_bound=INIT_MUT_LOOP_BOUND;
 
-			/*
+
 			if (!cfg_loaded)
-						  loadCFG();
-					  update_margin_bbs();
-					  int ridlist[margin_bb_count];
-					  int cnt=has_new_var_bits(virgin_var_bits,ridlist);
-					  char index_list_str[MAX_MUT_POS/4];
-					  char *ptr=index_list_str;
-					  for(int i=0;i<cnt;i++){
-						  int index=rid2index[ridlist[i]];
-						  //int l=sprintf(ptr,"(%d,%s),",ridlist[i],vertex_index[index].bbname);
-						  int l=sprintf(ptr,"%d,",ridlist[i]);
-						  ptr+=l;
-						  if(ptr-index_list_str>=MAX_MUT_POS/4){
-							  FATAL("ptr Overflow!:%p",ptr);
-						  }
-						  //record_value_changing_mutation(index,1);//muts recognized in this place has lower quality=1
-						  if(!mut_prior_mode){
-							  mut_prior_mode=1;//OKF("Switch to mut_prior_mode!");
-						  }
-					  }
-					  if (cnt>0){
-						  record_value_changing_mutation2(-1,1);
-					  u8 * log_file_name=alloc_printf("%s/new_path_affected_branch.txt", out_dir);
-		  u8 * info=alloc_printf("%d affected branch:%s,margin_bb_count:%d\n",cnt,index_list_str,margin_bb_count);
-		  int debug_fd = open(log_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
-		  if (debug_fd < 0) PFATAL("Unable to create '%s'", log_file_name);
-		  ck_write(debug_fd, info, strlen(info), log_file_name);
-		  close(debug_fd);
-					  }
-					  */
+				loadCFG();
+			  update_margin_bbs();
+/*
+			  int ridlist[margin_bb_count];
+			  int cnt=has_new_var_bits(virgin_var_bits,ridlist);
+			  char index_list_str[MAX_MUT_POS/4];
+			  char *ptr=index_list_str;
+			  for(int i=0;i<cnt;i++){
+				  //int index=rid2index[ridlist[i]];
+				  //int l=sprintf(ptr,"(%d,%s),",ridlist[i],vertex_index[index].bbname);
+				  ptr+=sprintf(ptr,"%d,",ridlist[i]);
+				  if(ptr-index_list_str>=MAX_MUT_POS/4){
+					  FATAL("ptr Overflow!:%p",ptr);
+				  }
+				  //record_value_changing_mutation(index,1);//muts recognized in this place has lower quality=1
+			  }
+
+			  if (cnt>0){
+				  WARNF("%d affected branch:%s\n",cnt,index_list_str);
+				  record_value_changing_mutation2(-1,1);
+//				  if(!mut_prior_mode){
+//				  					  mut_prior_mode=1;//OKF("Switch to mut_prior_mode!");
+//				  				  }
+
+//				  u8 * log_file_name=alloc_printf("%s/new_path_affected_branch.txt", out_dir);
+//				u8 * info=alloc_printf("%d affected branch:%s,margin_bb_count:%d\n",cnt,index_list_str,margin_bb_count);
+//				int debug_fd = open(log_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
+//				if (debug_fd < 0) PFATAL("Unable to create '%s'", log_file_name);
+//				ck_write(debug_fd, info, strlen(info), log_file_name);
+//				close(debug_fd);
+			  }*/
 
 			//t1=t2=t3=0;
-			if (cycles_wo_finds >3){
+			//cleanup_value_changing_mutation_record();
+			if (!branch_attack_mode && target_index!=-1 && vertex_index[target_index].state_based){
 				cleanup_value_changing_mutation_record();
+				WARNF("clean UP!");
 			}
 			/*
     		if (!cfg_loaded)
@@ -6072,43 +6107,72 @@ static inline void record_value_changing_mutation2(int index,int quality)
 		  print_mutation_table(index);
 	}
 }
-/*
+
 static int chcnt=0;
 static void check_record(char * mark)//all values in record_map must be records in record_list
 {
+	if(strcmp(mark,"Hello Ketty!!")){
+		return;
+	}
 	chcnt++;
-	const char *key;
-	map_iter_t iter = map_iter(&record_map);
+
 	u8 * log_file_name=alloc_printf("%s/check_log.txt", out_dir);
 	int debug_fd = open(log_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
 	char * info=alloc_printf("=----------%s----------=\n",mark);
 	OKF("=----------%s----------=",mark);
 	ck_write(debug_fd, info, strlen(info), log_file_name);
 	ck_free(info);
+
+	const char *key;
+	map_iter_t iter = map_iter(&record_map);
 	while ((key = map_next(&record_map, &iter))) {
-		void **p=map_get(&record_map, key);
-		Record *cur_r=*p;
+		Record *cur_r=*(Record**)map_get(&record_map, key);
+
+		//OKF("key=%s,cur_r=%p",key,cur_r);
+		if(!hashset_is_member(cur_r->B,(void *)(size_t)atoi(key)))
+		{
+			FATAL("A This should not happen!");
+		}
 
 		char rid_list_str[256];
 		char *ptr=rid_list_str;
+
+		//int flag=0;
 		for(hashset_itr_t iter = hashset_iterator(cur_r->B);hashset_iterator_has_next(iter);hashset_iterator_next(iter))
 		{
-			void * rid=(void *)hashset_iterator_value(iter);
-			ptr+=sprintf(ptr,"%d,",(int)(size_t)rid);
+			int rid = hashset_iterator_value(iter);
+			//if(rid==atoi(key)){
+			//	flag=1;
+			//}
+			int len=sprintf(ptr,"%d,",(int)(size_t)rid);
+			//OKF("capacity:%lu",iter->set->capacity);
+			if(len<=0)FATAL("ERROR during sprintf");
+			ptr+=len;
 		}
-		info=alloc_printf("%s -> %p,%s\n", key, *p,rid_list_str);
-		OKF("%s -> %p,%s", key, *p,rid_list_str);
+//		if(!flag){
+//			FATAL("B This should not happen!");
+//		}
+		info=alloc_printf("%s -> %p,%s\n", key, cur_r,rid_list_str);
+		OKF("%s -> %p,%s", key, cur_r,rid_list_str);
 		ck_write(debug_fd, info, strlen(info), log_file_name);
 		ck_free(info);
 
 		Record * it_r;
-		for(it_r=record_list;it_r!=NULL&&it_r!=cur_r;it_r=it_r->next);
+		for(it_r=record_list;it_r!=NULL&&it_r!=cur_r;it_r=it_r->next){
+			map_iter_t pos_iter = map_iter(&it_r->P);
+			const char *pos=NULL;
+			int flag=0;
+			while ((pos = map_next(&it_r->P, &pos_iter))) {
+				flag=1;
+			}
+			if(!flag) FATAL("r->P is empty!");
+		}
 		if(it_r==NULL&&record_list!=NULL)FATAL("(%d) %s Not in record_list %s -> %p",chcnt,info,key,cur_r);
 	}
 	close(debug_fd);
 	ck_free(log_file_name);
 }
-*/
+
 
 /*
  * This function may change record_list
@@ -6121,6 +6185,10 @@ static inline void  merge_record(Record* to, Record* from)
 	if(!record_list||!to||!from||to==from){
 		FATAL("EROOR record_list=%p,from=%p,to=%p",record_list,to,from);
 	}
+//	OKF("before");
+//	for(Record *t=record_list;t!=NULL;t=t->next){
+//		OKF("%p->",t);
+//	}
 	if(record_list!=to)
 	{
 		Record* prev;
@@ -6136,6 +6204,10 @@ static inline void  merge_record(Record* to, Record* from)
 		if(prev==NULL)FATAL("Not in record_list from=%p",from);
 		prev->next=from->next;
 	}
+//	OKF("after");
+//	for(Record *t=record_list;t!=NULL;t=t->next){
+//			OKF("%p->",t);
+//		}
 
 	//Merge distances
 	int to_num=hashset_num_items(to->B);
@@ -6151,11 +6223,17 @@ static inline void  merge_record(Record* to, Record* from)
 			FATAL("ERROR:The joint of record:%p and record %p contains %d, is not empty!",to,from,(int)(size_t)rid);
 		}
 		hashset_add(to->B, rid);
-		char rid_str[16];
+		char rid_str[16];//OKF("merge:%d",(int)(size_t)rid);
 		sprintf(rid_str,"%d",(int)(size_t)rid);
 		map_set(&record_map, rid_str, to);
+//		char ss2[16];
+//		strcpy(ss2,rid_str);
+//		void **p=map_get(&record_map,ss2);
+//		if(!p||*p!=to){
+//			FATAL("Key mismatch!!!");
+//		}
 	}
-
+	check_record("A");
 	//Merge Muations
 	for(int i=0;i<MUT_NUM;i++)
 	{
@@ -6178,6 +6256,7 @@ static inline void  merge_record(Record* to, Record* from)
 			map_set(&to->P, pos, *cnt_from);
 		}
 	}
+	check_record("B");
 	//destroy_record(from)
 	hashset_destroy(from->B);
 	map_deinit(&from->P);
@@ -6206,13 +6285,15 @@ static void record_value_changing_mutation(int ridlist[],int size)
 				tmp_r=cur_r;
 			}
 			if(cur_r!=tmp_r){
+				check_record("C");
 				merge_record((Record*)tmp_r,(Record*)cur_r);
+				check_record("D");
 			}
 		}
 	}
 	if(tmp_r){//insert to the merged tmp_r
 		Record * r=tmp_r;
-
+		check_record("E");
 		int origin_num=hashset_num_items(r->B);
 		int disjoint_sum=0;
 		int disjoint_cnt=0;
@@ -6261,7 +6342,9 @@ static void record_value_changing_mutation(int ridlist[],int size)
 				}
 			}
 		}
+		check_record("F");
 	}else{
+		check_record("G");
 		Record * r=(Record *)malloc(sizeof(Record));
 		r->B=hashset_create();
 		r->next=NULL;
@@ -6310,8 +6393,10 @@ static void record_value_changing_mutation(int ridlist[],int size)
 			r->next=record_list;
 			record_list=r;
 		}
+		check_record("I");
 	}
-	print_mutation_table(-1);
+
+	//print_mutation_table(-1);
 	/*
 	u8 * log_file_name=alloc_printf("%s/records_log.txt", out_dir);
 	int debug_fd = open(log_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
@@ -6494,72 +6579,197 @@ random:
 	random_mut++;
 	return;
 }
-static int pos_search_mode=0;
+
 static int pos_inc=0;
-static int search_round=0;
+#define MUT_SEARCH_TIMES 16
+static int mutator_search=MUT_SEARCH_TIMES;
+
+static int search_round1=0;
+static int search_round2=0;
+static int linear_search=0;
+static inline int gen_pos_from_record(Record *r,int debug)
+{
+	int sum=0;
+	map_iter_t iter = map_iter(&r->P);
+	const char *key;
+	int positions[1<<12];
+	int p_cnt=0;
+	while ((key = map_next(&r->P, &iter))) {
+		int cnt=(int)(size_t)(*map_get(&r->P, key));
+		if(debug)OKF("%s -> %d", key, cnt);
+		sum+=cnt;
+		positions[p_cnt++]=atoi(key);
+	}
+	if(sum==0||p_cnt==0){
+		check_record("Hello Ketty!!");
+		FATAL("SIGFPE when r->P is empty,p_cnt=%d",p_cnt);
+	}
+	return positions[UR(p_cnt)];
+	int rand2=UR(sum);
+	sum=0;
+	iter = map_iter(&r->P);
+	while ((key = map_next(&r->P, &iter))) {
+		int cnt=(int)(size_t)(*map_get(&r->P, key));
+		sum+=cnt;
+		if(sum>=rand2){
+			//OKF("=>%s -> %d", key, cnt);
+			break;
+		}
+	}
+	return atoi(key);
+}
+static inline int gen_pos_from_record_list(int debug)
+{
+	if(!record_list){
+		FATAL("record_list==NULL !");
+		return -1;
+	}
+	int sum=0;
+	const char *key;
+	int positions[1<<12];
+	int p_cnt=0;
+	for(Record *r=record_list;r!=NULL;r=r->next){
+		map_iter_t iter = map_iter(&r->P);
+		while ((key = map_next(&r->P, &iter))) {
+			int cnt=(int)(size_t)(*map_get(&r->P, key));
+			if(debug)OKF("%s -> %d", key, cnt);
+			sum+=cnt;
+			positions[p_cnt++]=atoi(key);
+		}
+	}
+	return positions[UR(p_cnt)];
+	int rand=UR(sum);
+	sum=0;
+	for(Record *r=record_list;r!=NULL;r=r->next){
+		map_iter_t iter = map_iter(&r->P);
+		while ((key = map_next(&r->P, &iter))) {
+			int cnt=(int)(size_t)(*map_get(&r->P, key));
+			sum+=cnt;
+			if(sum>=rand){
+				//OKF("=>%s -> %d", key, cnt);
+				return atoi(key);
+			}
+		}
+	}
+	FATAL("record_list!=NULL, but no recorded positions!");
+	return -1;//this should not happen
+
+}
+static inline Record * gen_record(Record *record_list)
+{
+	if(!record_list)return NULL;
+	double sum=0;
+	Record *r=NULL;
+	for(r =record_list;r!=NULL;r=r->next)
+	{
+		//sum+=(max_gd-r->distance+1);
+		sum+=200/(r->distance+1)+1;
+	}
+	if(sum==0)FATAL("ERROR when calculating sum r=%p",r);
+	int rand0=UR((int)(sum));
+	sum=0;
+	for(r =record_list;r!=NULL;r=r->next)
+	{
+		//sum2+=(max_gd-r->distance+1);
+		sum+=200/(r->distance+1)+1;
+		if(sum>=rand0){
+			break;//we select a record "r"
+		}
+	}
+	return r;
+}
 static inline void dispatch_random(u32 range,s32 len,u32 * arg)
 {//dai xie
 	arg[0]=-1;
 	arg[1]=-1;
+
 	if (mut_prior_mode)
 	{
+
+		//check if there exists an margin BB with distance==min_d(minimal distance of current margin BB set)
+		//and we do not have corresponding variable impacting records.
+		//if so we linearly search for good position
+		//if search failed we go to random
+		int meek_mut_list[]={10,15,1,2,3,4,5,6,7,8,9};
+		//int havoc_mut_list[]={11,12,13,14,16};
+		int *mut_list=meek_mut_list;
+		int *search_round=&search_round1;
+		if(target_index==-1||vertex_index[target_index].state_based){
+			goto monitor;
+		}
+		if(need_start_compaign){
+			//start a compaign to attack this branch
+			branch_attack_mode=1;
+			WARNF("start attack %d",vertex_index[target_index].rid);
+			linear_search=1;
+			search_round1=0;
+			search_round2=0;
+			need_start_compaign=0;
+			mutator_search=MUT_SEARCH_TIMES;
+			pos_inc=0;
+			arg[0]=mut_list[*search_round];
+			arg[1]=pos_inc++;
+			//OKF("###########pos=%d",arg[1]);
+			return;
+		}else if(branch_attack_mode && linear_search && pos_inc<len){
+			arg[0]=mut_list[*search_round];
+			arg[1]=pos_inc++;
+			//OKF("###########pos=%d",arg[1]);
+			return;
+		}/*else if(branch_attack_mode && linear_search && search_round1<1){
+			search_round=&search_round1;
+			search_round1++;
+			pos_inc=0;
+			arg[0]=mut_list[*search_round];
+			arg[1]=pos_inc++;
+			return;
+		}else if(target_index!=-1 && branch_attack_mode && linear_search && search_round2<5){
+			OKF("Linear meek search discovered nothing! Maybe we need Clone, Insert or Delete mutations");
+			search_round=&search_round2;
+			search_round2++;
+			pos_inc=0;
+			mut_list=havoc_mut_list;
+			arg[0]=mut_list[*search_round];
+			arg[1]=pos_inc++;
+			return;
+		}*/else if(branch_attack_mode && mutator_search>0){
+			int just_finish_linear_search=0;
+			char rid_str[16];
+			sprintf(rid_str,"%d",vertex_index[target_index].rid);
+			void ** p=map_get(&record_map,rid_str);
+			if(linear_search){
+				linear_search=0;
+				just_finish_linear_search=1;
+				WARNF("####finish linear search for %d %s, scaned:%d #####",vertex_index[target_index].rid,vertex_index[target_index].bbname,pos_inc);
+				if(!p){
+					vertex_index[target_index].state_based=1;
+					branch_attack_mode=0;
+					mutator_search=-1;
+					goto monitor;
+				}
+			}
+			if(!p){
+				goto monitor;
+				FATAL("Debug this! Maybe you called cleanup_value_changing_mutation_record()!");
+			}
+			arg[0]=mutator_search;
+			Record *r =*(Record **)p;
+			arg[1]=gen_pos_from_record(r,just_finish_linear_search);
+			mutator_search--;
+			if(mutator_search<=0){
+				branch_attack_mode=0;//target_index is not state_based, now we utilize the records to solve it
+			}
+			return;
+		}
+		if(linear_search)FATAL("#######");
+		if(branch_attack_mode){
+			branch_attack_mode=0;
+			FATAL("FFFFFFFFF");
+		}
+		//do normal record utilization muations
+monitor:
 		if(record_list)
 		{
-			//check if there exists an margin BB with distance==min_d
-			//and we do not have corresponding variable impacting records.
-			//if so we use mutation 10 to linearly search for good position(or random(currently comment out))
-			for(int i=0;i<margin_bb_count;i++)
-			{
-				int rid=margin_bb_rid[i];
-				int index=rid2index[rid];
-				if(vertex_index[index].distance==min_d)
-				{
-					char rid_str[16];
-					sprintf(rid_str,"%d",rid);
-					if(!map_get(&record_map,rid_str))
-					{
-						goto random;
-						if(!pos_search_mode)
-						{
-							pos_search_mode=1;
-							pos_inc=0;
-							arg[0]=10;
-							arg[1]=pos_inc++;
-							OKF("###########pos=%d",arg[1]);
-							return;
-						}else if (pos_inc<len){
-							arg[0]=10;
-							arg[1]=pos_inc++;
-							return;
-						}/*else if(search_round<3){
-							search_round++;
-							pos_inc=0;
-							arg[0]=10;
-							arg[1]=pos_inc++;
-						}*/else{
-							goto random;
-						}
-					}
-				}
-			}
-			pos_search_mode=0;
-			double sum=0;
-			Record *r;
-			for(r =record_list;r!=NULL;r=r->next)
-			{
-				//sum+=(max_gd-r->distance+1);
-				sum+=200/(r->distance+1)+1;
-			}
-			int rand0=UR((int)(sum));
-			double sum2=0;
-			for(r =record_list;r!=NULL;r=r->next)
-			{
-				//sum2+=(max_gd-r->distance+1);
-				sum2+=200/(r->distance+1)+1;
-				if(sum2>=rand0){
-					break;//we select a record "r"
-				}
-			}
 			int valid_mut[MUT_NUM];
 			int bound_values[MUT_NUM];
 			int valid_mut_cnt=0;
@@ -6567,24 +6777,27 @@ static inline void dispatch_random(u32 range,s32 len,u32 * arg)
 
 			int perfect_mut[MUT_NUM];
 			int perfect_mut_cnt=0;
-			/*float average=0;
-			int _cnt=0;
-			for(int i=1;i<MUT_NUM;i++)
-			{
-				if(mut_score[i]>0)
-				{
-					average+=mut_score[i];
-					_cnt++;
-				}
-			}
-			average=average/_cnt;*/
+//			float avg=0;
+//			int cnnt;
+//			for(int i=1;i<MUT_NUM;i++)
+//			{
+//				if(mut_score[i]>1)
+//				{
+//					avg+=mut_score[i];
+//					cnnt++;
+//				}
+//			}
+//			avg/=cnnt;
+
+			Record *r=gen_record(record_list);
 
 			for(int i=1;i<MUT_NUM;i++)
 			{
-				//if(mut_score[i]>=r->M[i]&&mut_score[i]>1)//define the validity of mutator
-				if(mut_score[i]>=mut_cnt[i]&&mut_score[i]>1)
+				if(mut_score[i]>=r->M[i]&&mut_score[i]>1)//define the validity of mutator
+				//if(mut_score[i]>=mut_cnt[i]&&mut_score[i]>1)//&&mut_score[i]>avg)
 				{
 					perfect_mut[perfect_mut_cnt]=i;
+					//OKF("##%02d,%02d|%02d|%s",i,mut_score[i],mut_cnt[i],get_description(i));
 					perfect_mut_cnt++;
 				}
 				if(mut_score[i]>0){//need improve to link list
@@ -6595,9 +6808,14 @@ static inline void dispatch_random(u32 range,s32 len,u32 * arg)
 				}
 			}
 			int rand=UR(100);
+
 			if (mut_prior_mode==1 && valid_mut_cnt>0 && rand<VALUE_CHANGE_STRATEGY_BOUND){//75%
 				//select mutation
-				if(perfect_mut_cnt>0 && rand<55){
+				int th=35;//35//40;
+				if(vertex_index[target_index].state_based){
+					th=40;//40//75
+				}
+				if(perfect_mut_cnt>0 && rand <th){
 					arg[0]=perfect_mut[UR(perfect_mut_cnt)];
 				}else if(rand < 70){
 					int index=binary_search(bound_values,valid_mut_cnt,UR(sum3));
@@ -6606,37 +6824,18 @@ static inline void dispatch_random(u32 range,s32 len,u32 * arg)
 				}else{
 					arg[0]=UR(range);
 				}
-				//select position
-				int sum4=0;
-				const char *key;
-				map_iter_t iter = map_iter(&r->P);
-
-				while ((key = map_next(&r->P, &iter))) {
-					int cnt=(int)(size_t)(*map_get(&r->P, key));
-					//OKF("%s -> %d", key, cnt);
-					sum4+=cnt;
-				}
-				int rand2=UR(sum4);
-				sum4=0;
-				iter = map_iter(&r->P);
-				while ((key = map_next(&r->P, &iter))) {
-					int cnt=(int)(size_t)(*map_get(&r->P, key));
-					sum4+=cnt;
-					if(sum4>=rand2){
-						//OKF("=>%s -> %d", key, cnt);
-						break;
-					}
-				}
-				/*
-				int fuzz=UR(10);
-				if(fuzz>80){
-					fuzz=1;
-				}else if(fuzz>70){
-					fuzz=-1;
+				if(vertex_index[target_index].state_based && rand%2>0){
+					arg[1]=-1;
 				}else{
-					fuzz=0;
-				}*/
-				arg[1]=atoi(key);
+					arg[1]=gen_pos_from_record(r,0);
+				}
+				//select position
+
+//				if(vertex_index[target_index].state_based){//share position
+//					arg[1]=gen_pos_from_record_list(0);
+//				}else{
+//					arg[1]=gen_pos_from_record(r,0);
+//				}
 			}
 		}
 	}
@@ -8022,6 +8221,10 @@ havoc_stage:
       //if(mut_prior_mode){
       if(cycles_wo_finds >=threshold_cycles_wo_finds){
     	 dispatch_random(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0),temp_len,arg);
+    	 if(linear_search){//only mutate once
+    		 stage_cur=my_stage_max;
+    		 i=my_use_stacking;
+    	 }
     	 record_mutation(arg[0]);
       }else{
     	 arg[0]=UR(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0));//original AFLGO setting
