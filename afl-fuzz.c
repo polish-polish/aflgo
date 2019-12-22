@@ -6111,7 +6111,7 @@ static inline void record_value_changing_mutation2(int index,int quality)
 static int chcnt=0;
 static void check_record(char * mark)//all values in record_map must be records in record_list
 {
-	if(strcmp(mark,"Hello Ketty!!")){
+	if(strcmp(mark,"SIGFPE in gen_pos_from_record!")){
 		return;
 	}
 	chcnt++;
@@ -6601,17 +6601,17 @@ static inline int gen_pos_from_record(Record *r,int debug)
 		positions[p_cnt++]=atoi(key);
 	}
 	if(sum==0||p_cnt==0){
-		check_record("Hello Ketty!!");
+		check_record("SIGFPE in gen_pos_from_record!");
 		FATAL("SIGFPE when r->P is empty,p_cnt=%d",p_cnt);
 	}
 	return positions[UR(p_cnt)];
-	int rand2=UR(sum);
+	int rand=UR(sum);
 	sum=0;
 	iter = map_iter(&r->P);
 	while ((key = map_next(&r->P, &iter))) {
 		int cnt=(int)(size_t)(*map_get(&r->P, key));
 		sum+=cnt;
-		if(sum>=rand2){
+		if(sum>=rand){
 			//OKF("=>%s -> %d", key, cnt);
 			break;
 		}
@@ -6716,14 +6716,14 @@ static inline void dispatch_random(u32 range,s32 len,u32 * arg)
 			arg[1]=pos_inc++;
 			//OKF("###########pos=%d",arg[1]);
 			return;
-		}/*else if(branch_attack_mode && linear_search && search_round1<1){
+		}else if(branch_attack_mode && linear_search && search_round1<3){
 			search_round=&search_round1;
 			search_round1++;
 			pos_inc=0;
 			arg[0]=mut_list[*search_round];
 			arg[1]=pos_inc++;
 			return;
-		}else if(target_index!=-1 && branch_attack_mode && linear_search && search_round2<5){
+		}/*else if(target_index!=-1 && branch_attack_mode && linear_search && search_round2<5){
 			OKF("Linear meek search discovered nothing! Maybe we need Clone, Insert or Delete mutations");
 			search_round=&search_round2;
 			search_round2++;
@@ -6740,7 +6740,7 @@ static inline void dispatch_random(u32 range,s32 len,u32 * arg)
 			if(linear_search){
 				linear_search=0;
 				just_finish_linear_search=1;
-				WARNF("####finish linear search for %d %s, scaned:%d #####",vertex_index[target_index].rid,vertex_index[target_index].bbname,pos_inc);
+				WARNF("finish linear search for %d %s, scaned:%d",vertex_index[target_index].rid,vertex_index[target_index].bbname,pos_inc);
 				if(!p){
 					vertex_index[target_index].state_based=1;
 					branch_attack_mode=0;
@@ -6750,7 +6750,7 @@ static inline void dispatch_random(u32 range,s32 len,u32 * arg)
 			}
 			if(!p){
 				goto monitor;
-				FATAL("Debug this! Maybe you called cleanup_value_changing_mutation_record()!");
+				FATAL("Maybe you called cleanup_value_changing_mutation_record() when branch_attack_mode=1. Please fix it!");
 			}
 			arg[0]=mutator_search;
 			Record *r =*(Record **)p;
@@ -6761,10 +6761,10 @@ static inline void dispatch_random(u32 range,s32 len,u32 * arg)
 			}
 			return;
 		}
-		if(linear_search)FATAL("#######");
+		if(linear_search)FATAL("You forgot to close linear_search before here!");
 		if(branch_attack_mode){
 			branch_attack_mode=0;
-			FATAL("FFFFFFFFF");
+			FATAL("You forgot to close branch_attack_mode before here!");
 		}
 		//do normal record utilization muations
 monitor:
