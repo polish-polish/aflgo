@@ -26,11 +26,11 @@ def merge_all_cfg(file_dir):
     lines=f.readlines();
     valid_fnames=set(map(lambda x: x.split(",")[0].strip(), lines))
 
-    GG = nx.DiGraph()
+    GG = nx.MultiDiGraph()
     print "Init empty Graph",nx.info(GG)
     for fname in valid_fnames:
-        print "\nParsing %s .." % fname 
-        G = nx.DiGraph(nx.drawing.nx_pydot.read_dot (file_dir+"/cfg."+fname+".dot"))
+        print "\nParsing %s .." % fname
+        G = nx.MultiDiGraph(nx.drawing.nx_pydot.read_dot (file_dir+"/cfg."+fname+".dot"))
         print nx.info (G)
         GG=nx.compose(GG,G)#GG=nx.union(GG,G,rename=('GG-','G-'))
     '''
@@ -172,25 +172,32 @@ if __name__ == '__main__':
               for pred_pred_pred in GG.predecessors(pred_pred):
                   r_set=[]
                   for succ in GG.successors(n):
-                      r_set.append(getNameFromLabel(pred_pred_pred,GG)+"->"+getNameFromLabel(pred_pred,GG)+"->"+getNameFromLabel(pred,GG)+"->"+getNameFromLabel(n,GG)+"->"+getNameFromLabel(succ,GG))
+                      for whatever in range(GG.number_of_edges(n,succ)):
+                         r_set.append(getNameFromLabel(pred_pred_pred,GG)+"->"+getNameFromLabel(pred_pred,GG)+"->"+getNameFromLabel(pred,GG)+"->"+getNameFromLabel(n,GG)+"->"+getNameFromLabel(succ,GG))
                   if len(r_set)==0:
                       r_set.append(getNameFromLabel(pred_pred_pred,GG)+"->"+getNameFromLabel(pred_pred,GG)+"->"+getNameFromLabel(pred,GG)+"->"+getNameFromLabel(n,GG))
-                  q_set+=r_set
+                  for nothing in range(GG.number_of_edges(pred_pred_pred,pred_pred)):
+                      q_set+=r_set
               if len(q_set)==0:
                   for succ in GG.successors(n):
-                      q_set.append(getNameFromLabel(pred_pred,GG)+"->"+getNameFromLabel(pred,GG)+"->"+getNameFromLabel(n,GG)+"->"+getNameFromLabel(succ,GG))
+                      for whatever in range(GG.number_of_edges(n,succ)):
+                          q_set.append(getNameFromLabel(pred_pred,GG)+"->"+getNameFromLabel(pred,GG)+"->"+getNameFromLabel(n,GG)+"->"+getNameFromLabel(succ,GG))
                   if len(q_set)==0:
                       q_set.append(getNameFromLabel(pred_pred,GG)+"->"+getNameFromLabel(pred,GG)+"->"+getNameFromLabel(n,GG))
-              t_set+=q_set
+              for nothing in range(GG.number_of_edges(pred_pred,pred)):
+                  t_set+=q_set
           if len(t_set)==0:
               for succ in GG.successors(n):
-                  t_set.append(getNameFromLabel(pred,GG)+"->"+getNameFromLabel(n,GG)+"->"+getNameFromLabel(succ,GG))
+                  for whatever in range(GG.number_of_edges(n,succ)):
+                      t_set.append(getNameFromLabel(pred,GG)+"->"+getNameFromLabel(n,GG)+"->"+getNameFromLabel(succ,GG))
               if len(t_set)==0:
                   t_set.append(getNameFromLabel(pred,GG)+"->"+getNameFromLabel(n,GG))
-          path_set+=t_set
+          for nothing in range(GG.number_of_edges(pred,n)):
+              path_set+=t_set
       if len(path_set)==0:
           for succ in GG.successors(n):
-              path_set.append(getNameFromLabel(n,GG)+"->"+getNameFromLabel(succ,GG))
+              for whatever in range(GG.number_of_edges(n,succ)):
+                  path_set.append(getNameFromLabel(n,GG)+"->"+getNameFromLabel(succ,GG))
           
       findit=False
       for rid,key,keystr in rid_key_keystr:
@@ -232,7 +239,7 @@ if __name__ == '__main__':
   out_edges_dot_str=""
   out_edges_str=""
   in_edges_str=""
-  for u,v in GG.edges:
+  for u,v,w in GG.edges:
       if u in networkID2rid and  v in networkID2rid:
           for rid_u in  networkID2rid[u]:
               for rid_v in  networkID2rid[v]:

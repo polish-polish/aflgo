@@ -6690,9 +6690,15 @@ static inline void dispatch_random(u32 range,s32 len,u32 * arg)
 		//and we do not have corresponding variable impacting records.
 		//if so we linearly search for good position
 		//if search failed we go to random
-		int meek_mut_list[]={10,15,1,2,3,4,5,6,7,8,9};
+		int with_dict={10,15,1,2,3,4,5,6,7,8,9};
+		int without_dict={10,1,2,3,4,5,6,7,8,9};
+		int *mut_list;
+		if (extras_cnt>0){
+			mut_list=with_dict;
+		}else{
+			mut_list=without_dict;
+		}
 		//int havoc_mut_list[]={11,12,13,14,16};
-		int *mut_list=meek_mut_list;
 		int *search_round=&search_round1;
 		if(target_index==-1||vertex_index[target_index].state_based){
 			goto monitor;
