@@ -6600,9 +6600,10 @@ static inline int gen_pos_from_record(Record *r,int debug)
 		sum+=cnt;
 		positions[p_cnt++]=atoi(key);
 	}
-	if(sum==0||p_cnt==0){
-		check_record("SIGFPE in gen_pos_from_record!");
-		FATAL("SIGFPE when r->P is empty,p_cnt=%d",p_cnt);
+	if(p_cnt==0||sum==0){
+		//There exists break statements in case:{2,3,6-9,11,12-16} of havoc_stage, as we do not have inputs longer enough.
+		//so tmp record is empty, the variable changing is caused by slices.
+		return -1;//TODO: handle this case;
 	}
 	return positions[UR(p_cnt)];
 	int rand=UR(sum);
@@ -6690,8 +6691,8 @@ static inline void dispatch_random(u32 range,s32 len,u32 * arg)
 		//and we do not have corresponding variable impacting records.
 		//if so we linearly search for good position
 		//if search failed we go to random
-		int with_dict={10,15,1,2,3,4,5,6,7,8,9};
-		int without_dict={10,1,2,3,4,5,6,7,8,9};
+		int with_dict[]={10,15,1,4,5};//they are cases without break exception
+		int without_dict[]={10,1,4,5};//they are cases without break exception
 		int *mut_list;
 		if (extras_cnt>0){
 			mut_list=with_dict;
