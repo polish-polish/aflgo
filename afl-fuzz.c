@@ -6111,9 +6111,7 @@ static inline void record_value_changing_mutation2(int index,int quality)
 static int chcnt=0;
 static void check_record(char * mark)//all values in record_map must be records in record_list
 {
-	if(strcmp(mark,"SIGFPE in gen_pos_from_record!")){
-		return;
-	}
+	return;//currently disabled
 	chcnt++;
 
 	u8 * log_file_name=alloc_printf("%s/check_log.txt", out_dir);
@@ -6680,7 +6678,7 @@ static inline Record * gen_record(Record *record_list)
 	return r;
 }
 static inline void dispatch_random(u32 range,s32 len,u32 * arg)
-{//dai xie
+{//still buggy
 	arg[0]=-1;
 	arg[1]=-1;
 
@@ -6694,7 +6692,7 @@ static inline void dispatch_random(u32 range,s32 len,u32 * arg)
 		int with_dict[]={10,15,1,4,5};//they are cases without break exception
 		int without_dict[]={10,1,4,5};//they are cases without break exception
 		int *mut_list;
-		if (extras_cnt>0){
+		if (extras_cnt>0||a_extras_cnt>0){
 			mut_list=with_dict;
 		}else{
 			mut_list=without_dict;
@@ -6712,16 +6710,20 @@ static inline void dispatch_random(u32 range,s32 len,u32 * arg)
 			search_round1=0;
 			search_round2=0;
 			need_start_compaign=0;
-			mutator_search=MUT_SEARCH_TIMES;
+			if (extras_cnt>0||a_extras_cnt>0){
+				mutator_search=16;
+			}else{
+				mutator_search=14;
+			}
 			pos_inc=0;
 			arg[0]=mut_list[*search_round];
 			arg[1]=pos_inc++;
-			//OKF("###########pos=%d",arg[1]);
+			//OKF("A mut=%d,pos=%d",arg[0],arg[1]);
 			return;
 		}else if(branch_attack_mode && linear_search && pos_inc<len){
 			arg[0]=mut_list[*search_round];
 			arg[1]=pos_inc++;
-			//OKF("###########pos=%d",arg[1]);
+			//OKF("B mut=%d,pos=%d",arg[0],arg[1]);
 			return;
 		}else if(branch_attack_mode && linear_search && search_round1<3){
 			search_round=&search_round1;
@@ -6729,6 +6731,7 @@ static inline void dispatch_random(u32 range,s32 len,u32 * arg)
 			pos_inc=0;
 			arg[0]=mut_list[*search_round];
 			arg[1]=pos_inc++;
+			//OKF("C mut=%d,pos=%d",arg[0],arg[1]);
 			return;
 		}/*else if(target_index!=-1 && branch_attack_mode && linear_search && search_round2<5){
 			OKF("Linear meek search discovered nothing! Maybe we need Clone, Insert or Delete mutations");
