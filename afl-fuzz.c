@@ -6662,7 +6662,7 @@ static inline Record * gen_record(Record *record_list)
 	for(r =record_list;r!=NULL;r=r->next)
 	{
 		//sum+=(max_gd-r->distance+1);
-		sum+=200/(r->distance+1)+1;
+		sum+=200/(r->distance-0.95)+1;
 	}
 	if(sum==0)FATAL("ERROR when calculating sum r=%p",r);
 	int rand0=UR((int)(sum));
@@ -6670,7 +6670,7 @@ static inline Record * gen_record(Record *record_list)
 	for(r =record_list;r!=NULL;r=r->next)
 	{
 		//sum2+=(max_gd-r->distance+1);
-		sum+=200/(r->distance+1)+1;
+		sum+=200/(r->distance-0.95)+1;
 		if(sum>=rand0){
 			break;//we select a record "r"
 		}
@@ -6827,7 +6827,7 @@ monitor:
 				}
 				if(perfect_mut_cnt>0 && rand <th){
 					arg[0]=perfect_mut[UR(perfect_mut_cnt)];
-				}else if(rand < 70){
+				}else if(rand < 70){//70
 					int index=binary_search(bound_values,valid_mut_cnt,UR(sum3));
 					arg[0]=valid_mut[index];
 					//arg[0]=valid_mut[UR(valid_mut_cnt)];
