@@ -3589,7 +3589,7 @@ static void loadCFG() {
 			{
 				vertex_index[i].distance=d;
 				//OKF("%d,%s reachable",vertex_index[i].rid,vertex_index[i].bbname);
-				rlist_num++;break;
+				rlist_num++;//break; //Don't break, because there will be vertexes with same bbname.
 			}
 		}
 	}
