@@ -198,7 +198,7 @@ void AFLCoverage::bbRecord(unsigned int cur_loc, BasicBlock &BB,
 std::string AFLCoverage::getBBName(BasicBlock &BB) {
 	std::string bb_name("");
 	std::string filename;
-	unsigned line;
+	unsigned line,column;
 	for (auto &I : BB) {
 #ifdef LLVM_OLD_DEBUG_API
 		DebugLoc Loc = I.getDebugLoc();
@@ -218,6 +218,7 @@ std::string AFLCoverage::getBBName(BasicBlock &BB) {
 
 		if (DILocation *Loc = I.getDebugLoc()) {
 			line = Loc->getLine();
+			column = Loc->getColumn();
 			filename = Loc->getFilename().str();
 
 			if (filename.empty()) {
@@ -242,7 +243,7 @@ std::string AFLCoverage::getBBName(BasicBlock &BB) {
 				if (found != std::string::npos)
 					filename = filename.substr(found + 1);
 
-				bb_name = filename + ":" + std::to_string(line);
+				bb_name = filename + ":" + std::to_string(line) + ":" +std::to_string(column);
 				return bb_name;
 				//break;
 			}
@@ -661,7 +662,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 
 				std::string bb_name("");
 				std::string filename;
-				unsigned line;
+				unsigned line,column;
 
 				for (auto &I : BB) {
 #ifdef LLVM_OLD_DEBUG_API
@@ -672,6 +673,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 						DILocation oDILoc = cDILoc.getOrigLocation();
 
 						line = oDILoc.getLineNumber();
+						column = oDILoc.getColumnNumber();
 						filename = oDILoc.getFilename().str();
 
 						if (filename.empty()) {
@@ -682,12 +684,14 @@ bool AFLCoverage::runOnModule(Module &M) {
 
 					if (DILocation *Loc = I.getDebugLoc()) {
 						line = Loc->getLine();
+						column = Loc->getColumn();
 						filename = Loc->getFilename().str();
 
 						if (filename.empty()) {
 							DILocation *oDILoc = Loc->getInlinedAt();
 							if (oDILoc) {
 								line = oDILoc->getLine();
+								column = oDILoc->getColumn();
 								filename = oDILoc->getFilename().str();
 							}
 						}
@@ -706,7 +710,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 							if (found != std::string::npos)
 								filename = filename.substr(found + 1);
 
-							bb_name = filename + ":" + std::to_string(line);
+							bb_name = filename + ":" + std::to_string(line) + ":" + std::to_string(column);
 
 						}
 
@@ -844,6 +848,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 							DILocation oDILoc = cDILoc.getOrigLocation();
 
 							unsigned line = oDILoc.getLineNumber();
+							unsigned column = oDILoc.getColumnNumber();
 							std::string filename = oDILoc.getFilename().str();
 
 							if (filename.empty()) {
@@ -854,12 +859,14 @@ bool AFLCoverage::runOnModule(Module &M) {
 						if (DILocation *Loc = I.getDebugLoc()) {
 
 							unsigned line = Loc->getLine();
+							unsigned column = Loc->getColumn();
 							std::string filename = Loc->getFilename().str();
 
 							if (filename.empty()) {
 								DILocation *oDILoc = Loc->getInlinedAt();
 								if (oDILoc) {
 									line = oDILoc->getLine();
+									column = oDILoc->getColumn();
 									filename = oDILoc->getFilename().str();
 								}
 							}
@@ -871,7 +878,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 							if (found != std::string::npos)
 								filename = filename.substr(found + 1);
 
-							bb_name = filename + ":" + std::to_string(line);
+							bb_name = filename + ":" + std::to_string(line) + ":" + std::to_string(column);
 							break;
 
 						}

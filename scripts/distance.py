@@ -10,7 +10,7 @@ def node_name (name):
   if is_cg:
     return "\"{%s}\"" % name
   else:
-    return "\"{%s:" % name
+    return "\"{%s" % name
 
 #################################
 # Find the graph node for a name

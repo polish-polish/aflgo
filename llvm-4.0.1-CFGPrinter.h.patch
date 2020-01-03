@@ -1,0 +1,47 @@
+--- /home/yangke/Program/AFL/aflgo/llvm/llvm-4.0.1/include/llvm/Analysis/CFGPrinter.h	2016-09-16 02:35:27.000000000 +0800
++++ /usr/local/include/llvm/Analysis/CFGPrinter.h	2020-01-03 19:03:04.643664691 +0800
+@@ -25,6 +25,7 @@
+ #include "llvm/IR/Instructions.h"
+ #include "llvm/IR/PassManager.h"
+ #include "llvm/Support/GraphWriter.h"
++#include "llvm/IR/DebugInfo.h"
+ 
+ namespace llvm {
+ class CFGViewerPass
+@@ -62,6 +63,36 @@
+ 
+   static std::string getSimpleNodeLabel(const BasicBlock *Node,
+                                         const Function *) {
++    /* add by yangke start */
++    std::string bb_name="";
++    for (auto &I : *Node) {
++	DebugLoc Loc = I.getDebugLoc();
++
++	if (Loc.get()) {
++		//Module *m(Node->getParent ()->getParent());
++		//DILocation cDILoc(Loc.getAsMDNode(m->getContext()));
++		//DILocation oDILoc = cDILoc.getOrigLocation();
++
++		unsigned line = Loc.getLine();
++                unsigned column = Loc.getCol();
++		std::string filename = Loc.get()->getFilename().str();
++
++
++
++		if (filename.empty() || line == 0)
++			continue;
++		std::size_t found = filename.find_last_of("/\\");
++		if (found != std::string::npos)
++			filename = filename.substr(found + 1);
++
++		bb_name = filename + ":" + std::to_string(line) + ":" + std::to_string(column);
++		break;
++
++	}
++    }
++    if (!bb_name.empty())
++      return bb_name;
++    /* add by yangke end */
+     if (!Node->getName().empty())
+       return Node->getName().str();
+ 

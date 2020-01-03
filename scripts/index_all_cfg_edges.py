@@ -52,15 +52,15 @@ def getNameFromLabel(n,GG):
     node=GG.nodes[n]
     #print node,n
     #e.g. 
-    #{'shape': 'record', 'cov': 0, 'label': '"{entry.c:34:}"'}
-    #{'shape': 'record', 'cov': 0, 'label': '"{entry.c:26:|{<s0>T|<s1>F}}"'}
+    #{'shape': 'record', 'cov': 0, 'label': '"{entry.c:34:5}"'}
+    #{'shape': 'record', 'cov': 0, 'label': '"{entry.c:26:10|{<s0>T|<s1>F}}"'}
     #{'shape': 'record', 'cov': 0, 'label': '"{%23}"'}
     if node.has_key("label"):
-       if ":" in node["label"]:
-           array=node["label"].split(":")
-           return array[0][2:]+":"+array[1]
-       #else:
-       #    return node["label"]
+       if "|" in node["label"]:
+           array=node["label"].split("|")
+           return array[0][2:]
+       elif ":" in node["label"]:
+           return node["label"][2:-2]
     #return str(n)
     return "@"
 #dedulplicate

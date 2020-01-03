@@ -3577,7 +3577,7 @@ static void loadCFG() {
 	int rlist_num=0;
 	while (fgets(tmp, MAX_LINE, f)) {
 		///OKF("orig_out:%s",strtok(tmp,"\n"));
-		char * bbname=strtok(tmp,",");
+		char * bbname_file_line=strtok(tmp,",");
 		char * d_str=strtok(NULL,",");
 
 		double d=atof(d_str);
@@ -3585,11 +3585,11 @@ static void loadCFG() {
 		for (int i=0;i<vertex_num;i++)
 		{
 			//OKF("%s,%s",vertex_index[i].bbname,bbname);
-			if (0==strcmp(vertex_index[i].bbname,bbname))
+			if (strstr(vertex_index[i].bbname,bbname_file_line))
 			{
 				vertex_index[i].distance=d;
 				//OKF("%d,%s reachable",vertex_index[i].rid,vertex_index[i].bbname);
-				rlist_num++;//break; //Don't break, because there will be vertexes with same bbname.
+				rlist_num++;//break; //Don't break, because there may be vertexes with same bbname. TODO:verify and fix it
 			}
 		}
 	}
@@ -6827,7 +6827,7 @@ monitor:
 				}
 				if(perfect_mut_cnt>0 && rand <th){
 					arg[0]=perfect_mut[UR(perfect_mut_cnt)];
-				}else if(rand < 70){//70
+				}else if(valid_mut_cnt>0 && rand < 70){//70
 					int index=binary_search(bound_values,valid_mut_cnt,UR(sum3));
 					arg[0]=valid_mut[index];
 					//arg[0]=valid_mut[UR(valid_mut_cnt)];
