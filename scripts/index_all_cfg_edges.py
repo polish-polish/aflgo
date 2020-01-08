@@ -248,7 +248,7 @@ if __name__ == '__main__':
                   out_edges_dot_str+=rid_u+"->"+rid_v+";\n"
       else:
           if "%" not in getNameFromLabel(n,GG):
-              print "ERROR in map GG to rid graph, keystr missing"
+              print "ERROR in mapping GG to rid graph, keystr missing"
               print "u:"+u+"\nv:"+v+"\n"
               x=1/0
   out_edge_index_file=open(args.temp_dir+'/out_edge_index.txt','w+')
