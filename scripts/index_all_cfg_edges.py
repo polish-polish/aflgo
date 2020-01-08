@@ -21,8 +21,8 @@ def get_margin_node_rids(networkID2rid,GG):
             if n in networkID2rid:
                 ret.apend(networkID2rid[n])
     return ret
-def merge_all_cfg(file_dir):
-    f=open(args.dot_path+'/../distance.callgraph.txt', "r")
+def merge_all_cfg():
+    f=open(args.temp_dir+'/distance.callgraph.txt', "r")
     lines=f.readlines();
     valid_fnames=set(map(lambda x: x.split(",")[0].strip(), lines))
 
@@ -30,7 +30,7 @@ def merge_all_cfg(file_dir):
     print "Init empty Graph",nx.info(GG)
     for fname in valid_fnames:
         print "\nParsing %s .." % fname
-        G = nx.MultiDiGraph(nx.drawing.nx_pydot.read_dot (file_dir+"/cfg."+fname+".dot"))
+        G = nx.MultiDiGraph(nx.drawing.nx_pydot.read_dot (args.temp_dir+"/dot-files/cfg."+fname+".dot"))
         print nx.info (G)
         GG=nx.compose(GG,G)#GG=nx.union(GG,G,rename=('GG-','G-'))
     '''
@@ -80,21 +80,21 @@ if __name__ == '__main__':
   is_cg = 1
   was_added = 0
   parser = argparse.ArgumentParser ()    
-  parser.add_argument ('-d', '--dot_path', type=str, required=True, help="The dot-file directory in which each dot file represents a CFG of a function")
+  parser.add_argument ('-t', '--temp-dir', type=str, required=True, help="The directory which contains `dot-files` and `rid_bbname_pairs.txt`")
   args = parser.parse_args ()
-  print "\nParsing %s .." % args.dot_path
-  GG=merge_all_cfg(args.dot_path)
-  nx.drawing.nx_pydot.write_dot(GG, args.dot_path+"/merge_all_cfg.dot")
+  print "\nParsing %s .." % args.temp_dir
+  GG=merge_all_cfg()
+  nx.drawing.nx_pydot.write_dot(GG, args.temp_dir+"/merge_all_cfg.dot")
   
   #MAP:rid=>path_set={pred_pred->pred->it->succ}
-  #origin_file=args.dot_path+"/../rid_bbname_pairs.txt"
-  #temp_file=args.dot_path+"/../rid_bbname_pairs2.txt"
+  #origin_file=args.temp_dir+"/rid_bbname_pairs.txt"
+  #temp_file=args.temp_dir+"/rid_bbname_pairs2.txt"
   #os.system("cat "+origin_file+"|sort|uniq >"+temp_file+" && mv "+temp_file+" "+origin_file)
-  f=open(args.dot_path+'/../rid_bbname_pairs.txt', "r")
+  f=open(args.temp_dir+'/rid_bbname_pairs.txt', "r")
   lines=f.readlines()
   f.close()
   lines=dedulplicate(lines)
-  f=open(args.dot_path+'/../rid_bbname_pairs.txt', "w+")
+  f=open(args.temp_dir+'/rid_bbname_pairs.txt', "w+")
   f.writelines(lines)
   f.close()
   key2rid=dict()
@@ -232,7 +232,7 @@ if __name__ == '__main__':
               print path_set
               warnings.warn("ERROR cannot find rid for n="+n);
       #print GG.nodes.data()
-  node_index_file=open(args.dot_path+'/../node_index.txt','w+')
+  node_index_file=open(args.temp_dir+'/node_index.txt','w+')
   node_index_file.write(node_index_str)
   node_index_file.close()
   
@@ -251,16 +251,16 @@ if __name__ == '__main__':
               print "ERROR in map GG to rid graph, keystr missing"
               print "u:"+u+"\nv:"+v+"\n"
               x=1/0
-  out_edge_index_file=open(args.dot_path+'/../out_edge_index.txt','w+')
-  in_edge_index_file=open(args.dot_path+'/../in_edge_index.txt','w+')
-  out_edge_index_dot_file=open(args.dot_path+'/../out_edge_index.dot','w+')
+  out_edge_index_file=open(args.temp_dir+'/out_edge_index.txt','w+')
+  in_edge_index_file=open(args.temp_dir+'/in_edge_index.txt','w+')
+  out_edge_index_dot_file=open(args.temp_dir+'/out_edge_index.dot','w+')
   out_edge_index_file.write(out_edges_str)
   in_edge_index_file.write(in_edges_str)
   out_edge_index_dot_file.write('digraph "merged CFG" {\nlabel="merged CFG";\n\n'+out_edges_dot_str+'}')
   out_edge_index_file.close()
   in_edge_index_file.close()
   out_edge_index_dot_file.close()
-  cmd="dot -Tsvg "+args.dot_path+"/../out_edge_index.dot -o " +args.dot_path+"/../out_edge_index.svg"
+  cmd="dot -Tsvg "+args.temp_dir+"/out_edge_index.dot -o " +args.temp_dir+"/out_edge_index.svg"
   os.system(cmd)
   
  
@@ -269,7 +269,7 @@ if __name__ == '__main__':
   #if necessary dump these dict index to files to augment C program running.
   
 # #read from #/home/yangke/Program/AFL/aflgo/aflgo/tutorial/samples/work/out/entry_result/fuzz_bitmap
-# buf=read_into_buffer(args.dot_path+'/../../out/entry_result/fuzz_bitmap')
+# buf=read_into_buffer(args.temp_dir+'/../out/entry_result/fuzz_bitmap')
 # #update(buf,GG,networkID2rid)
 # for u,v in GG.edges:
 #   if GG.edges[u,v]['cov']==0:

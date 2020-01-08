@@ -71,7 +71,7 @@ if [ "$1" != "-" ] ; then
 	$CC $CFLAGS -c $SCRIPT_DIR/sqlite3.c
 	$CC $CFLAGS -c $SCRIPT_DIR/ossfuzz.c
 	$CXX $CFLAGS $LDFLAGS -ldl -pthread sqlite3.o ossfuzz.o $TEST_SUITE_DIR/examples/example-hooks.cc  -o ${TARGET}_profiled
-	$AFLGO/scripts/index_all_cfg_edges.py -d $TMP_DIR/dot-files
+	$AFLGO/scripts/index_all_cfg_edges.py -t $TMP_DIR
 	#$AFLGO/tutorial/samples/test/vis-dot.sh $TMP_DIR/dot-files
 fi
 !

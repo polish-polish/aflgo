@@ -80,7 +80,7 @@ if [ "$1" != "-" ] ; then
 	cd $SUBJECT
 	$CXX $CXXFLAGS -std=c++11 -I BUILD/include -I BUILD/ BUILD/src/tools/ftfuzzer/ftfuzzer.cc $TEST_SUITE_DIR/examples/example-hooks.cc BUILD/objs/.libs/libfreetype.a -lpng -larchive -lbz2 -lz -o ${TARGET}_profiled
 	if [[ $AFLGO == *good ]];then
-		$AFLGO/scripts/index_all_cfg_edges.py -d $TMP_DIR/dot-files
+		$AFLGO/scripts/index_all_cfg_edges.py -t $TMP_DIR
 		#$AFLGO/tutorial/samples/test/vis-dot.sh $TMP_DIR/dot-files
 	fi
 fi

@@ -116,7 +116,7 @@ if [ "$2" != "-" ] ; then
 	cd $SUBJECT 
 	$CXX $CXXFLAGS $LDFLAGS -std=c++11 -v  $TEST_SUITE_DIR/libpng-1.2.56/target.cc $TEST_SUITE_DIR/examples/example-hooks.cc $DOWNLOAD_DIR/BUILD/.libs/libpng12.a -I $DOWNLOAD_DIR/BUILD/ -lz -o ${TARGET}_profiled
 	if [[ $AFLGO == *good ]];then
-		$AFLGO/scripts/index_all_cfg_edges.py -d $TMP_DIR/dot-files
+		$AFLGO/scripts/index_all_cfg_edges.py -t $TMP_DIR
 		#$AFLGO/tutorial/samples/test/vis-dot.sh $TMP_DIR/dot-files
 	fi	
 fi

@@ -19,7 +19,7 @@ elif [ "$TARGET" == "regex" ] ; then
 elif [ "$TARGET" == "maze" ] ; then
 	TIME=5m
 fi
-:<<!
+
 if [ "$2" != "-" ] ; then
 	if [ ! -f ./${TARGET}.c ]; then
 	    echo "We need ${TARGET}.c in current directory:$SUBJECT."
@@ -67,7 +67,7 @@ if [ "$2" != "-" ] ; then
         
 	$CC $CFLAGS  ./${TARGET}.c -o ${TARGET}_profiled
         
-	$AFLGO/scripts/index_all_cfg_edges.py -d $TMP_DIR/dot-files
+	$AFLGO/scripts/index_all_cfg_edges.py -t $TMP_DIR
         ./vis-dot.sh $TMP_DIR/dot-files
 	
   	# Construct seed corpus
@@ -92,7 +92,7 @@ if [ "$2" != "-" ] ; then
 	
         
 fi
-!
+
 
 if [ "$TARGET" == "maze" ] ; then
 #gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -x $SUBJECT/maze.dict -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
