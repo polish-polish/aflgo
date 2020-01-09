@@ -239,8 +239,16 @@ if __name__ == '__main__':
   out_edges_dot_str=""
   out_edges_str=""
   in_edges_str=""
+  dul_in=set()
+  dul_out=set()
   for u,v,w in GG.edges:
       if u in networkID2rid and  v in networkID2rid:
+          if len(set(networkID2rid[u])) > 1:
+              if set(networkID2rid[u]).issubset(dul_out):continue
+              dul_out|=set(networkID2rid[u])
+          if len(set(networkID2rid[v])) > 1:
+              if set(networkID2rid[v]).issubset(dul_in):continue
+              dul_in|=set(networkID2rid[v])
           for rid_u in  networkID2rid[u]:
               for rid_v in  networkID2rid[v]:
                   out_edges_str+=rid_u+","+rid_v+"\n"
