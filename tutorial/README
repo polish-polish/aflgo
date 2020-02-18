@@ -1,4 +1,5 @@
-Ordered Scripts:
+Please follow `aflgo-all-from-the-begining.sh` to prepare the environment for running and compiling aflgo.
+Odered Scripts:
 ./1.download_llvm.sh
 ./2.prerequisit.sh
 ./3.download_compile_aflgo.sh
