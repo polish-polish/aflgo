@@ -316,11 +316,7 @@ static s8  interesting_8[]  = { INTERESTING_8 };
 static s16 interesting_16[] = { INTERESTING_8, INTERESTING_16 };
 static s32 interesting_32[] = { INTERESTING_8, INTERESTING_16, INTERESTING_32 };
 /* add by yangke start */
-static map_void_t margin_bbs;
-static int margin_bb_count=0;
-static double min_d=1.7E+308;//min distance of margin basic block, initialize in loadCFG().
-static double min_gd=1.7E+308;//min distance of strong connected margin basic block group, initialize in record_value_changing_mutation().
-static double max_gd=0.0;//max distance of strong connected margin basic block group, initialize in record_value_changing_mutation().
+
 /* remember interesting mutaion operation and the operateed positions */
 
 #define MAX_MUT_POS (1024) //4KB
@@ -356,20 +352,7 @@ static unsigned max_mut_loop_bound=INIT_MUT_LOOP_BOUND;
 static int mut_prior_mode=0;//flags that indicate we are in mutation prior mode
 //TODO: add more mutator argument info other than position ...
 
-
-struct position{
-	int pos;
-	int cnt;
-	struct position * next;
-};
-typedef struct mutation{
-	int code;
-	int cnt;
-	struct position *pos_list;
-	struct mutation *next;
-}Mutation;
-
-typedef struct vertex_item{
+typedef struct BasicBlock{
 	int rid;
 	char bbname[256];
 	double distance;//distance
@@ -392,6 +375,27 @@ typedef struct record{
 	double distance;
 	struct record * next;
 } Record;
+
+typedef struct {
+	int cur_size;
+	int max_size;
+	void ** elements;
+} Container;
+
+typedef struct {
+   char * fname;
+   map_void_t * rid2node;
+   Container * margin_bbs;
+   Container * pmbbs;//possible margin bbs
+} CFG;
+
+Container * CFGs=NULL;
+
+static int margin_bb_count=0;
+static double min_d=1.7E+308;//min distance of margin basic block, initialize in loadCFG().
+static double min_gd=1.7E+308;//min distance of strong connected margin basic block group, initialize in record_value_changing_mutation().
+static double max_gd=0.0;//max distance of strong connected margin basic block group, initialize in record_value_changing_mutation().
+
 
 static Record * record_list=NULL;
 static map_void_t record_map;
@@ -1121,14 +1125,18 @@ static inline u8 has_new_bits(u8* virgin_map) {
 	u64* vir = (u64*) virgin_var_map;
 	u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
 	//OKF("margin_bb_count=%d",margin_bb_count);
-	map_iter_t margin_iter = map_iter(&margin_bbs);
-	const char *key;
-	while ((key = map_next(&margin_bbs, &margin_iter))) {
-		Node *node=(Node*)*map_get(&margin_bbs,key);
-		int rid=node->rid;
-		if(unlikely(vir[rid] & (~cur[rid]))){
-			vir[rid]&=cur[rid];
-			node_list[ret++]=node;
+	for (int i=0;i<CFGs->cur_size;i++) {
+		CFG * cfg=(CFG *)CFGs->elements[i];
+		if(!cfg->rid2node) FATAL("fname2cfg is broken, fname=%p,rid2node=(nil)",cfg->fname);
+		if(!cfg->margin_bbs) FATAL("fname=%p Margin BB not initialized! cfg->margin_bbs=(nil)",cfg->fname);
+		Container * margin_bbs = cfg->margin_bbs;
+		for(int j=0;j<margin_bbs->cur_size;j++){
+			Node * node = (Node*)margin_bbs->elements[j];
+			int rid=node->rid;
+			if(unlikely(vir[rid] & (~cur[rid]))){
+				vir[rid]&=cur[rid];
+				node_list[ret++]=node;
+			}
 		}
 	}
 	return ret;
@@ -1139,14 +1147,17 @@ static inline u8 has_new_bits(u8* virgin_map) {
 	    u32* vir = (u32*) virgin_var_map;
 	    u32* cur = (u32*)(trace_bits+MAP_SIZE+8);
 
-	    map_iter_t margin_iter = map_iter(&margin_bbs);
-		const char *key;
-		while ((key = map_next(&margin_bbs, &margin_iter))) {
-			Node *node=(Node*)*map_get(&margin_bbs,key);
-			int rid=node->rid;
-			if(unlikely(vir[rid] & (~cur[rid]))){
-				vir[rid]&=cur[rid];
-				node_list[ret++]=node;
+	    for (int i=0;i<CFGs->cur_size;i++) {
+			CFG * cfg=(CFG *)CFGs->elements[i];
+			if(!cfg->rid2node) FATAL("fname2cfg is broken, fname=%p,rid2node=(nil)",cfg->fname);
+			Container * margin_bbs = cfg->margin_bbs;
+			for(int j=0;j<margin_bbs->cur_size;j++){
+				Node * node = (Node*)margin_bbs->elements[j];
+				int rid=node->rid;
+				if(unlikely(vir[rid] & (~cur[rid]))){
+					vir[rid]&=cur[rid];
+					node_list[ret++]=node;
+				}
 			}
 		}
 	    return ret;
@@ -3366,17 +3377,33 @@ void destroy_records()
 		free(r);
 	}
 }
+static inline void init_container(Container * c){
+	c->cur_size=0;
+	c->max_size=256;
+	c->elements=malloc(256*sizeof(Node*));
+}
+static inline void add_element(Container * c, void * element){
+	if(c->cur_size>=c->max_size){
+		c->max_size<<=1;
+		c->elements=(void**)realloc(c->elements,c->max_size);
+	}
+	c->elements[c->cur_size++]=element;
+}
+static inline void destroy_container(Container * c){
+	free(c->elements);
+	c->cur_size=0;
+	c->max_size=0;
+}
+
 
 void destroy_all_cfg()
 {
-	const char *fname;
-	map_iter_t iter = map_iter(&fname2cfg);
-	while ((fname = map_next(&fname2cfg, &iter))) {
-	    void **p=map_get(&fname2cfg, fname);
-	    if(!p) FATAL("fname2cfg is broken, fname=%p,rid2node=(nil)",fname);
-	    map_void_t * rid2node = (map_void_t *)*p;
+	for (int i=0;i<CFGs->cur_size;i++) {
+	    CFG * cfg=(CFG *)CFGs->elements[i];
+	    if(!cfg->rid2node) FATAL("fname2cfg is broken, fname=%p,rid2node=(nil)",cfg->fname);
+	    map_void_t * rid2node = cfg->rid2node;
 	    const char *rid_str;
-	    map_iter_t node_iter = map_iter(&rid2node);
+	    map_iter_t node_iter = map_iter(rid2node);
 	    while ((rid_str = map_next(rid2node, &node_iter))) {
 	    	void **q=map_get(rid2node, rid_str);
 	    	if(!q) FATAL("rid2node is broken, rid=%p,node=(nil)",rid_str);
@@ -3396,15 +3423,18 @@ void destroy_all_cfg()
 	    }
 	    map_deinit(rid2node);
 	    free(rid2node);
-	    rid2node=NULL;
+	    cfg->rid2node=NULL;
+	    ck_free(cfg->fname);
+	    destroy_container(cfg->margin_bbs);
+	    free(cfg->margin_bbs);
+	    destroy_container(cfg->pmbbs);
+	    free(cfg->pmbbs);
 	}
-	map_deinit(&fname2cfg);
-	map_deinit(&margin_bbs);
-	//map_deinit(&global_rid2node);
-	//map_deinit(&global_rid2fnames);
+	destroy_container(CFGs);
+	free(CFGs);
 }
 
-static map_void_t * loadFuncCFG(char * fname) {
+static CFG * loadFuncCFG(char * fname) {
 	OKF("Load CFG for %s",fname);
 	/*1. init vetex_index */
 	u8 *fn = alloc_printf("%s/index/%s.node_index.txt",temp_dir, fname);
@@ -3415,9 +3445,15 @@ static map_void_t * loadFuncCFG(char * fname) {
 		FATAL("No such file or directory: %s",fn);
 
 	}
+	CFG * cfg=(CFG *)malloc(sizeof(CFG));
+	cfg->fname=alloc_printf("%s",fname);
+	cfg->rid2node =(map_void_t *)malloc(sizeof(map_void_t));
+	cfg->pmbbs=(Container *)malloc(sizeof(Container));
+	init_container(cfg->pmbbs);
+	cfg->margin_bbs=NULL;
 	vertex_num=0;
-	map_void_t * rid2node =(map_void_t *)malloc(sizeof(map_void_t));
-	map_init(rid2node);
+
+	map_init(cfg->rid2node);
     u8 tmp[MAX_LINE];
 	while (fgets(tmp, MAX_LINE, f)) {
 		char *rid_str=strtok(tmp,"|");
@@ -3443,7 +3479,7 @@ static map_void_t * loadFuncCFG(char * fname) {
 		node->state_based=0;
 		node->successors=NULL;
 		node->invalid_positions=NULL;
-		map_set(rid2node, rid_str, node);/*
+		map_set(cfg->rid2node, rid_str, node);/*
 		void **p=map_get(global_rid2node, rid_str);
 		if(!p){
 			map_set(global_rid2node, rid_str, node);
@@ -3481,7 +3517,7 @@ static map_void_t * loadFuncCFG(char * fname) {
 		char * second=strtok(NULL,",");
 		int last=strlen(second)-1;
 		second[last]=second[last]=='\n'?'\0':second[last];//strip the '\n'
-		void **p= map_get(rid2node,first);
+		void **p= map_get(cfg->rid2node,first);
 		if(!p){
 			FATAL("Cannot find rid:%s in rid2node.", first);
 		}
@@ -3514,15 +3550,18 @@ static map_void_t * loadFuncCFG(char * fname) {
 		char * d_str=strtok(NULL,",");
 		double d=atof(d_str);
 		const char *key;
-		map_iter_t iter = map_iter(&rid2node);
-		while ((key = map_next(rid2node, &iter)))
+		map_iter_t iter = map_iter(cfg->rid2node);
+		while ((key = map_next(cfg->rid2node, &iter)))
 		{
-		    void **p=map_get(rid2node, key);
+		    void **p=map_get(cfg->rid2node, key);
 		    if(!p) FATAL("rid2node contains NULL node");
 			Node* node=(Node *)*p;
 			if (strstr(node->bbname,file_and_line))
 			{
 				node->distance=d;
+				if(node->out_degree>1){
+					add_element(cfg->pmbbs,node);
+				}
 				rlist_num++;//break; //Don't break, because there may be vertexes with same bbname. TODO:verify and fix it
 			}
 		}
@@ -3534,7 +3573,7 @@ static map_void_t * loadFuncCFG(char * fname) {
 	ck_free(fn);
 	fclose(f);
 	cfg_loaded=1;
-	return rid2node;
+	return cfg;
 }
 static void loadCFG()
 {
@@ -3545,15 +3584,16 @@ static void loadCFG()
 		FATAL("No such file or directory: %s",fn);
 
 	}
+	if(!CFGs){
+		CFGs=(Container*)malloc(sizeof(Container));
+		init_container(CFGs);
+	}
 	char line[MAX_LINE];
 	map_init(&fname2cfg);
-	//map_init(&global_rid2node);
-	//map_init(&global_rid2fnames);
 	while (fgets(line, MAX_LINE, f)) {
 		char * fname=strtok(line,",");
-		map_void_t * rid2node= loadFuncCFG(fname);
-		if(rid2node)
-			map_set(&fname2cfg, fname, rid2node);
+		CFG * cfg = loadFuncCFG(fname);
+		add_element(CFGs,cfg);
 	}
 	ck_free(fn);
 	fclose(f);
@@ -3567,21 +3607,23 @@ static void loadCFG()
 
 static void update_margin_bbs()
 {
-    /*1. update coverage information and clean margin*/
-	const char *fname;
-	map_iter_t iter = map_iter(&fname2cfg);
-	while ((fname = map_next(&fname2cfg, &iter))) {
-		void **p=map_get(&fname2cfg, fname);
-		if(!p) FATAL("fname2cfg is broken, fname=%s,rid2node=(nil)",fname);
-		map_void_t * rid2node = (map_void_t *)*p;
+
+	margin_bb_count=0;
+
+	for (int i=0;i<CFGs->cur_size;i++) {
+		/*1. update coverage information and clean margin*/
+		CFG * cfg=(CFG *)CFGs->elements[i];
+		char *fname = cfg->fname;
+		if(!cfg->rid2node) FATAL("fname2cfg is broken, fname=%p,rid2node=(nil)",fname);
+		map_void_t *rid2node = cfg->rid2node;
 		const char *rid_str;
 		map_iter_t node_iter = map_iter(&rid2node);
 		while ((rid_str = map_next(rid2node, &node_iter))) {
-			void **q=map_get(rid2node, rid_str);
-			if(!q) FATAL("rid2node is broken, rid=%s,node=(nil)",rid_str);
-			Node * node = (Node *)*q;
+			void **p=map_get(rid2node, rid_str);
+			if(!p) FATAL("rid2node is broken, rid=%s,node=(nil)",rid_str);
+			Node * node = (Node *)*p;
 			if(!node->successors) continue;
-			int start=atoi(rid_str);
+			int start=node->rid;
 			const char *end_str;
 			map_iter_t succ_iter = map_iter(node->successors);
 			while ((end_str = map_next(node->successors, &succ_iter))) {
@@ -3591,40 +3633,31 @@ static void update_margin_bbs()
 					map_set(node->successors,end_str,1);
 					node->cov=1;
 					if(!map_get(rid2node, end_str)){
-						FATAL("Wierd,end_str=%s,fname=%s",end_str,fname);
+						FATAL("Wierd,end_str=%s,fname=%s",end_str,cfg->fname);
 					}
 					((Node *)*map_get(rid2node, end_str))->cov=1;
 
 				}
 			}
 		}
-	}
-
-	/*2 clean margin record*/
-	map_deinit(&margin_bbs);
-	map_init(&margin_bbs);
-	margin_bb_count=0;
-
-	/*3. find and record margin basic blocks.*/
-	//for each function
-	iter = map_iter(&fname2cfg);
-	while ((fname = map_next(&fname2cfg, &iter))) {
-		void **p=map_get(&fname2cfg, fname);
-		if(!p) FATAL("fname2cfg is broken, fname=%s,rid2node=(nil)",fname);
-		map_void_t * rid2node = (map_void_t *)*p;
-		const char *rid_str;
-		map_iter_t node_iter = map_iter(&rid2node);
-		//for each basic block:BB_start
-		while ((rid_str = map_next(rid2node, &node_iter))) {
-			void **q=map_get(rid2node, rid_str);
-			if(!q) FATAL("rid2node is broken, rid=%s,node=(nil)",rid_str);
-			Node * node = (Node *)*q;
-			int start=atoi(rid_str);
-			const char *end_str;
-			if(node->cov==1 && node->out_degree>1){
+		/*2 clean margin record*/
+		if(!cfg->margin_bbs){
+			cfg->margin_bbs=(Container*)malloc(sizeof(Container));
+			init_container(cfg->margin_bbs);
+		}else{
+			destroy_container(cfg->margin_bbs);
+			init_container(cfg->margin_bbs);
+		}
+		/*3. find and record margin basic blocks.*/
+		Container * pmbbs = cfg->pmbbs;
+		for(int j=0;j<pmbbs->cur_size;j++){
+			Node * node = (Node*)pmbbs->elements[j];
+			int start=node->rid;
+			if(node->cov==1){
 				node->is_margin=0;
 				map_iter_t succ_iter = map_iter(node->successors);
 				//for each successors of BB_start
+				const char *end_str;
 				while ((end_str = map_next(node->successors, &succ_iter))) {
 					//Margin BB condition:
 					//BB_start(cov:1)-[cov:0]->BB_end(distance>0)
@@ -3632,9 +3665,7 @@ static void update_margin_bbs()
 					//if (virgin_bits[(start>>1)^end]==0xff && ((Node*)*map_get(rid2node,end_str))->distance>0.0)
 					if (!cov && ((Node*)*map_get(rid2node,end_str))->distance>0.0)
 					{
-						char * key=alloc_printf("%p,%s",node,fname);
-						map_set(&margin_bbs,key,node);
-						ck_free(key);
+						add_element(cfg->margin_bbs,node);
 						if(node->margin_history==0){
 							if(node->distance<min_d && node->distance >-0.0001)
 							{
@@ -3676,7 +3707,6 @@ static void update_margin_bbs()
 			}
 		}
 	}
-	//FATAL("KILL BY YANGKE update_margin_bbs.");
 }
 /* add by yangke end */
 static inline char * get_description(int mut_code)
