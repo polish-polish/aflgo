@@ -121,6 +121,9 @@ protected:
 	void handleBinaryOperator(Value *insert_point, BinaryOperator * BOP, GlobalVariable *AFLMapPtr,
 			GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
 			unsigned int cur_loc);
+	void InstrumentBB(Value *insert_point, GlobalVariable *AFLMapPtr,
+				GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
+				unsigned int cur_loc);
 };
 
 }
@@ -250,10 +253,16 @@ std::string AFLCoverage::getBBName(BasicBlock &BB) {
 		}
 	}
 	//bbname_id_pairs << bb_name << "," << cur_loc << "\n";
-	if (bb_name.size()>0)
+	if (bb_name.size()>0){
 		return bb_name;
-	else
+	}else{
+		/*std::string Str;
+		raw_string_ostream OS(Str);
+
+		BB.printAsOperand(OS, false);
+		return OS.str();*/
 		return "@";
+	}
 }
 inline void AFLCoverage::debug(Value *v,std::string info) { //contains format string vulnerability
 #ifdef DEBUG_
@@ -334,6 +343,7 @@ void AFLCoverage::handleCastInst(Value *insert_point, CastInst * CI, GlobalVaria
 void AFLCoverage::handleFCmpInst(Value *insert_point, FCmpInst * FCmp, GlobalVariable *AFLMapPtr,
 		GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
 		unsigned int cur_loc) {
+	//FATAL("UNHANDLE FCmpInst");
 	//TODO map float variable
 	//Value * op0 = FCmp->getOperand(0);
 	//Value * op1 = FCmp->getOperand(1);
@@ -395,7 +405,60 @@ void AFLCoverage::handleBinaryOperator(Value *insert_point, BinaryOperator * BOP
 		}
 	}
 }
+void AFLCoverage::InstrumentBB(Value *insert_point, GlobalVariable *AFLMapPtr,
+	GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M, unsigned int cur_loc) {
+	TerminatorInst *TI = BB.getTerminator();
+	///OKF("add by yangke.");
+	std::string alert_info;
+	llvm::raw_string_ostream rso(alert_info);
+	TI->print(rso);
+	//lattice=0;//reset lattice shl param of value to store for new BB instrumentation
+	///OKF("#TerminatorInst#:%s", alert_info.c_str());
+	if (BranchInst * BI = dyn_cast < BranchInst > (TI)) {
+		if (BI->isConditional()) {
+			Value * cond = BI->getCondition();
+			if(!insert_point) insert_point=cond;
+			if (ICmpInst * icmp = dyn_cast < ICmpInst > (cond)) {
+				debug(icmp,"#Condition Value is a ICmpInst#");
+				handleICmpInst(insert_point, icmp, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+				//OKF("Instrument[%d] With Condition:ICmpInst OK!\n",instrument_cnt++);
+			} else if (FCmpInst * fcmp = dyn_cast < FCmpInst > (cond)) {
+				debug(fcmp,"#FCompInst#");
+				////FATAL("TODO:Check and fix it!");
+				handleFCmpInst(insert_point, fcmp, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+			} else if (BinaryOperator * BOP = dyn_cast < BinaryOperator > (cond)) {
+				debug(BOP,"#Condition Value is a BinaryOperator#");
+				handleBinaryOperator(insert_point, BOP, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+				//OKF("--Instrument[%d] With Condition:BinaryOperator OK!\n",instrument_cnt++);
+			}
+		}
+	}else if (SwitchInst * SI = dyn_cast < SwitchInst > (TI)) {
+		Value * cond = SI->getCondition();
+		if(!insert_point) insert_point=cond;
+		if (CastInst * CI = dyn_cast < CastInst > (cond)) {
+			debug(CI,"#Condition Value depends on CastInst#");
+			handleCastInst(insert_point, CI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+			//OKF("Instrument[%d] With Condition:CastInst in SwitchInst OK!\n",instrument_cnt++);
+		}else if (LoadInst * LI = dyn_cast < LoadInst > (cond)) {
+			debug(LI,"#Condition Value depends on LoadInst#");
+			handleLoadInst(insert_point, LI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+			//OKF("Instrument[%d] With Condition:LoadInst in SwitchInst OK!\n",instrument_cnt++);
+		}
 
+		unsigned num=0;
+
+		for(SwitchInst::CaseIt it=SI->case_begin();it!=SI->case_end();it++,num++)
+		{
+
+			///OKF("#NUM#:%d",num);
+			ConstantInt * value=it.getCaseValue();
+			//int64_t x=value->getSExtValue();
+			debug(value,"#Case Value#");
+			//OKF("#Case Value#SExt#i32:%d", (int)x);
+			//TODO: record and resuse these special data when testing.
+		}
+	}
+}
 
 
 //size_t AFLCoverage::hashName(Value *v) {
@@ -423,6 +486,7 @@ void AFLCoverage::mapValue(Value *insert_point, Value *v, GlobalVariable *AFLMap
 	BasicBlock::iterator IP = BB.getFirstInsertionPt();
 	BasicBlock::iterator InsertIP=IP;
     ///debug(v,"Value to store");
+	int flag=1;
     for(int i=0;IP!= BB.end();IP++,i++)
 	{
 		///std::string info_str;
@@ -430,17 +494,19 @@ void AFLCoverage::mapValue(Value *insert_point, Value *v, GlobalVariable *AFLMap
 		///rso<<"BBInst["<<i<<"]";
 		///debug(&(*IP),rso.str());
 		if (&(*IP) == insert_point){
-			InsertIP = IP;
+			InsertIP = IP;flag=0;
 			break;
 		}
 	}
-	IRBuilder<> IRB(&(*InsertIP));
+    //IRBuilder<> IRB(&(*InsertIP));
+    IRBuilder<> IRB((Instruction *)insert_point);
 	//use Int64Ty
 	/* Load SHM pointer */
 
 	LoadInst *MapPtr = IRB.CreateLoad(AFLMapPtr);
 	MapPtr->setMetadata(M.getMDKindID("nosanitize"),MDNode::get(C, None));
-	///debug(MapPtr,"MapPtr\t");
+	if(flag)
+	debug(MapPtr,"MapPtr\t");
         
 #ifdef __x86_64__
 	IntegerType *LargestType = Int64Ty;
@@ -453,7 +519,7 @@ void AFLCoverage::mapValue(Value *insert_point, Value *v, GlobalVariable *AFLMap
 	Value *_MapValuePtr = IRB.CreateGEP(MapPtr, Offset);
 	ConstantInt *Zero=ConstantInt::get(LargestType, 0);
 	Value *MapValuePtr = IRB.CreateGEP(LargestType, _MapValuePtr, Zero);
-	///debug(MapValuePtr,"MapValuePtr\t");
+	if(flag)debug(MapValuePtr,"MapValuePtr\t");
 
 #ifdef LLVM_OLD_DEBUG_API
 	LoadInst * pre_v = IRB.CreateLoad(MapValuePtr);
@@ -462,13 +528,13 @@ void AFLCoverage::mapValue(Value *insert_point, Value *v, GlobalVariable *AFLMap
 	LoadInst * pre_v = IRB.CreateLoad(LargestType,MapValuePtr);
 #endif
 	pre_v->setMetadata(M.getMDKindID("nosanitize"),MDNode::get(C, None));    
-	///debug(pre_v,"pre_v\t");
+	if(flag)debug(pre_v,"pre_v\t");
 	Value * casted_v=IRB.CreateZExt(v,LargestType);
-	///debug(casted_v,"casted_v\t");
+	if(flag)debug(casted_v,"casted_v\t");
 	Value * shled_v=IRB.CreateShl(casted_v,lattice);
-	///debug(shled_v,"shled_v\t");
+	if(flag)debug(shled_v,"shled_v\t");
 	Value * new_v = IRB.CreateXor(shled_v, pre_v);
-	///debug(new_v,"new_v\t");
+	if(flag)debug(new_v,"new_v\t");
 
 #ifdef __x86_64__
 	lattice=(lattice+8)%64;
@@ -479,7 +545,7 @@ void AFLCoverage::mapValue(Value *insert_point, Value *v, GlobalVariable *AFLMap
 
 	StoreInst *myStore = IRB.CreateStore(new_v, MapValuePtr);
 	myStore->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-    ///debug(myStore,"myStore\t");
+	if(flag)debug(myStore,"myStore\t");
 
 }
 bool AFLCoverage::runOnModule(Module &M) {
@@ -515,7 +581,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 		if (OutDirectory.empty()) {
 			FATAL("Provide output directory '-outdir <directory>'");
 			FATAL("We need to out put <BBname,RandomID> pairs into <directory>/rid_bbname_pairs.txt");
-			FATAL("TIP:<BBname>::=<filename>:<linenum>  e.g 'entry.c:45,1804289383'");
+			FATAL("TIP:<BBname>::=<file name>:<line num>:<column num>  e.g 'entry.c:45:11'");
 			return false;
 		}
 		std::ifstream cf(DistanceFile.c_str());
@@ -541,7 +607,6 @@ bool AFLCoverage::runOnModule(Module &M) {
 			FATAL("Unable to find %s.", DistanceFile.c_str());
 			return false;
 		}
-
 	}
 
 	LLVMContext &C = M.getContext();
@@ -817,27 +882,41 @@ bool AFLCoverage::runOnModule(Module &M) {
 		ftargets.close();
 
 	} else {
-		/*add by yangke start*/
-		std::ofstream bbname_id_pairs;
-		OKF("#Dump <<BBname>,RandomId> pairs to %s",
-				(OutDirectory + "/rid_bbname_pairs.txt\n").c_str());
-		bbname_id_pairs.open(OutDirectory + "/rid_bbname_pairs.txt",
-				std::ofstream::out | std::ofstream::app);
 
-		/*add by yangke end*/
 		for (auto &F : M) {
+
+			/*add by yangke start*/
+			std::ofstream bbname_id_pairs;
+			/* Create dot-files directory */
+			std::string rid_bbname_pairs_dir(OutDirectory + "/rid_bbname_pairs");
+			struct stat sb;
+			if (stat(rid_bbname_pairs_dir.c_str(), &sb) != 0) {
+				const int dir_err = mkdir(rid_bbname_pairs_dir.c_str(),
+						S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+				if (-1 == dir_err)
+					WARNF("Could not create directory %s.", rid_bbname_pairs_dir.c_str());
+			}
+			//M.getSourceFileName()
+			if(!OutDirectory.empty()){
+				OKF("#Dump <<BBname>,RandomId> pairs to %s",
+					(rid_bbname_pairs_dir + "/" + F.getName().str() +".rid_bbname_pairs.txt\n").c_str());
+				bbname_id_pairs.open(rid_bbname_pairs_dir + "/" + F.getName().str() +".rid_bbname_pairs.txt",
+					std::ofstream::out | std::ofstream::app);
+			}
+			/*add by yangke end*/
 
 			int distance = -1;
 
 			for (auto &BB : F) {
 
 				distance = -1;
+				std::string bb_name;
 
 				if (is_aflgo) {
 					TerminatorInst *TI = BB.getTerminator();
 					IRBuilder<> Builder(TI);
 
-					std::string bb_name;
+					//std::string bb_name;
 					for (auto &I : BB) {
 
 #ifdef LLVM_OLD_DEBUG_API
@@ -924,65 +1003,20 @@ bool AFLCoverage::runOnModule(Module &M) {
 
 				//original aflgo instrumentation break
 				/*add by yangke start*/
-				if (!OutDirectory.empty())
+				if (!OutDirectory.empty()){
 					bbRecord(cur_loc, BB, bbname_id_pairs);
-				/*add by yangke end*/
-				/*add by yangke start*/
-#ifndef YANGKE
-                if (distance < 0 && AFL_R(4) < 1) //monitor with probability 1/4 if static analysis said that it's not reachable.
-                	continue;
-				TerminatorInst *TI = BB.getTerminator();
-				///OKF("add by yangke.");
-				std::string alert_info;
-				llvm::raw_string_ostream rso(alert_info);
-				TI->print(rso);
-				//lattice=0;//reset lattice shl param of value to store for new BB instrumentation
-				///OKF("#TerminatorInst#:%s", alert_info.c_str());
-				if (BranchInst * BI = dyn_cast < BranchInst > (TI)) {
-					if (BI->isConditional()) {
-						Value * cond = BI->getCondition();
-						if (ICmpInst * icmp = dyn_cast < ICmpInst > (cond)) {
-							debug(icmp,"#Condition Value is a ICmpInst#");
-							handleICmpInst(cond, icmp, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-							//OKF("Instrument[%d] With Condition:ICmpInst OK!\n",instrument_cnt++);
-						} else if (FCmpInst * fcmp = dyn_cast < FCmpInst > (cond)) {
-							debug(fcmp,"#FCompInst#");
-							////FATAL("TODO:Check and fix it!");
-							handleFCmpInst(cond, fcmp, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-						} else if (BinaryOperator * BOP = dyn_cast < BinaryOperator > (cond)) {
-							debug(BOP,"#Condition Value is a BinaryOperator#");
-							handleBinaryOperator(cond, BOP, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-							//OKF("--Instrument[%d] With Condition:BinaryOperator OK!\n",instrument_cnt++);
-						}
-					}
-				}else if (SwitchInst * SI = dyn_cast < SwitchInst > (TI)) {
-					Value * cond = SI->getCondition();
-					if (CastInst * CI = dyn_cast < CastInst > (cond)) {
-						debug(CI,"#Condition Value depends on CastInst#");
-						handleCastInst(cond, CI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-						//OKF("Instrument[%d] With Condition:CastInst in SwitchInst OK!\n",instrument_cnt++);
-					}else if (LoadInst * LI = dyn_cast < LoadInst > (cond)) {
-						debug(LI,"#Condition Value depends on LoadInst#");
-						handleLoadInst(cond, LI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-						//OKF("Instrument[%d] With Condition:LoadInst in SwitchInst OK!\n",instrument_cnt++);
-					}
-
-					unsigned num=0;
-
-					for(SwitchInst::CaseIt it=SI->case_begin();it!=SI->case_end();it++,num++)
-					{
-
-						///OKF("#NUM#:%d",num);
-						ConstantInt * value=it.getCaseValue();
-						int64_t x=value->getSExtValue();
-						debug(value,"#Case Value#");
-						//OKF("#Case Value#SExt#i32:%d", (int)x);
-						//TODO: record and resuse these special data when testing.
-					}
 				}
+#ifndef YANGKE
+                if (distance >= 0){
+                	InstrumentBB(NULL, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+                }
+
+                //Value *insert_point;
+
 #endif
 				/*add by yangke end*/
-				//original aflgo instrumentation resume
+
+				//original aflgo instrumentation continue
 				ConstantInt *CurLoc = ConstantInt::get(Int32Ty, cur_loc);
 
 				/* Load prev_loc */
@@ -1076,10 +1110,10 @@ bool AFLCoverage::runOnModule(Module &M) {
 				inst_blocks++;
 
 			}
+			/*add by yangke start*/
+			bbname_id_pairs.close();
+			/*add by yangke end*/
 		}
-		/*add by yangke start*/
-		bbname_id_pairs.close();
-		/*add by yangke end*/
 	}
 
 	/* Say something nice. */

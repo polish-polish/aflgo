@@ -74,27 +74,17 @@ def dedulplicate(lines):
         if rid+";"+bb_name+";"+predstr+";"+succs_str not in s:
             s.add(rid+";"+bb_name+";"+predstr+";"+succs_str)
             ls.append(line)
-    return ls   
-# Main function
-if __name__ == '__main__':
-  is_cg = 1
-  was_added = 0
-  parser = argparse.ArgumentParser ()    
-  parser.add_argument ('-t', '--temp-dir', type=str, required=True, help="The directory which contains `dot-files` and `rid_bbname_pairs.txt`")
-  args = parser.parse_args ()
-  print "\nParsing %s .." % args.temp_dir
-  GG=merge_all_cfg()
-  nx.drawing.nx_pydot.write_dot(GG, args.temp_dir+"/merge_all_cfg.dot")
-  
+    return ls
+def indexFunction(fname,GG):
   #MAP:rid=>path_set={pred_pred->pred->it->succ}
   #origin_file=args.temp_dir+"/rid_bbname_pairs.txt"
   #temp_file=args.temp_dir+"/rid_bbname_pairs2.txt"
   #os.system("cat "+origin_file+"|sort|uniq >"+temp_file+" && mv "+temp_file+" "+origin_file)
-  f=open(args.temp_dir+'/rid_bbname_pairs.txt', "r")
+  f=open(args.temp_dir+'/rid_bbname_pairs/'+ fname +'.rid_bbname_pairs.txt', "r")
   lines=f.readlines()
   f.close()
   lines=dedulplicate(lines)
-  f=open(args.temp_dir+'/rid_bbname_pairs.txt', "w+")
+  f=open(args.temp_dir+'/rid_bbname_pairs/'+ fname +'.rid_bbname_pairs.txt', "w+")
   f.writelines(lines)
   f.close()
   key2rid=dict()
@@ -144,9 +134,10 @@ if __name__ == '__main__':
           for succ in succs:
               path_set.append(bb_name+","+succ)
       '''
-      if bb_name=="jdmarker.c:611":
-          print path_set     
-          x=1/0'''
+      if bb_name=="ttgload.c:1835:40":
+          print "####\n",path_set     
+          x=1/0
+      '''
           
       if rid not in rid2key:
           rid2key[rid]=[path_set]
@@ -199,6 +190,14 @@ if __name__ == '__main__':
               for whatever in range(GG.number_of_edges(n,succ)):
                   path_set.append(getNameFromLabel(n,GG)+"->"+getNameFromLabel(succ,GG))
           
+      if "conftest.c" in getNameFromLabel(n,GG):
+          print "skip:",path_set 
+          continue
+      '''
+      if "ttgload.c:1469:27" == getNameFromLabel(n,GG):
+          print path_set
+          print 1/0
+      '''
       findit=False
       for rid,key,keystr in rid_key_keystr:
           a=dict()
@@ -220,8 +219,10 @@ if __name__ == '__main__':
                   networkID2rid[n]=[rid]
               else:
                   print path_set
-                  warnings.warn("dulplicate networkID:"+n+"\n insert "+rid+" to "+str(networkID2rid[n]));
-                  networkID2rid[n].append(rid)
+                  warnings.warn("dulplicate networkID:"+n+"\n insert "+rid+" to "+str(networkID2rid[n]))
+                  #networkID2rid[n].append(rid)
+                  warnings.warn("libtool will compile two verions of object files:\n\t1st compile: fPIC one stores in `.libs`.\n\t2nd compile normal one in normal target directory.\n\tCurrently we only store the map rid of the second one.\n")
+                  networkID2rid[n]=[rid]
               if rid not in rid2networkID:
                   rid2networkID[rid]=[n]
               else:
@@ -230,9 +231,13 @@ if __name__ == '__main__':
       if not findit:
           if "%" not in getNameFromLabel(n,GG):
               print path_set
-              warnings.warn("ERROR cannot find rid for n="+n);
+              warnings.warn("ERROR cannot find rid for n="+n+",label="+getNameFromLabel(n,GG));
+              print 1/0
       #print GG.nodes.data()
-  node_index_file=open(args.temp_dir+'/node_index.txt','w+')
+  index_path=args.temp_dir+'/index'
+  if not os.path.exists(index_path):
+      os.makedirs(index_path)
+  node_index_file=open(index_path + '/' + fname +'.node_index.txt','w+')
   node_index_file.write(node_index_str)
   node_index_file.close()
   
@@ -255,21 +260,42 @@ if __name__ == '__main__':
                   in_edges_str+=rid_v+","+rid_u+"\n"
                   out_edges_dot_str+=rid_u+"->"+rid_v+";\n"
       else:
-          if "%" not in getNameFromLabel(n,GG):
-              print "ERROR in mapping GG to rid graph, keystr missing"
-              print "u:"+u+"\nv:"+v+"\n"
-              x=1/0
-  out_edge_index_file=open(args.temp_dir+'/out_edge_index.txt','w+')
-  in_edge_index_file=open(args.temp_dir+'/in_edge_index.txt','w+')
-  out_edge_index_dot_file=open(args.temp_dir+'/out_edge_index.dot','w+')
+          print "ERROR in mapping GG to rid graph, keystr missing"
+          print u+":"+getNameFromLabel(u,GG)
+          print v+":"+getNameFromLabel(v,GG)
+          #print 1/0
+  out_edge_index_file=open(index_path+'/'+ fname +'.out_edge_index.txt','w+')
+  in_edge_index_file=open(index_path+'/'+ fname +'.in_edge_index.txt','w+')
+  out_edge_index_dot_file=open(index_path+'/'+ fname +'.out_edge_index.dot','w+')
   out_edge_index_file.write(out_edges_str)
   in_edge_index_file.write(in_edges_str)
-  out_edge_index_dot_file.write('digraph "merged CFG" {\nlabel="merged CFG";\n\n'+out_edges_dot_str+'}')
+  out_edge_index_dot_file.write('digraph "CFG" {\nlabel="CFG for \''+ fname +'\' function";\n\n'+out_edges_dot_str+'}')
   out_edge_index_file.close()
   in_edge_index_file.close()
   out_edge_index_dot_file.close()
-  cmd="dot -Tsvg "+args.temp_dir+"/out_edge_index.dot -o " +args.temp_dir+"/out_edge_index.svg"
-  os.system(cmd)
+  cmd="dot -Tsvg " + index_path+"/" + fname + ".out_edge_index.dot -o " + index_path + "/" + fname + ".out_edge_index.svg"
+  os.system(cmd)   
+# Main function
+if __name__ == '__main__':
+  is_cg = 1
+  was_added = 0
+  parser = argparse.ArgumentParser ()
+  parser.add_argument ('-t', '--temp-dir', type=str, required=True, help="The directory which contains `dot-files` and `rid_bbname_pairs.txt`")
+  args = parser.parse_args ()
+  print "\nParsing %s .." % args.temp_dir
+  #GG=merge_all_cfg()
+  #nx.drawing.nx_pydot.write_dot(GG, args.temp_dir+"/merge_all_cfg.dot")
+  f=open(args.temp_dir+'/distance.callgraph.txt', "r")
+  lines=f.readlines();
+  valid_fnames=set(map(lambda x: x.split(",")[0].strip(), lines))
+  #print "Init empty Graph",nx.info(GG)
+  for fname in valid_fnames:
+      print "\nParsing %s .." % fname
+      G = nx.MultiDiGraph(nx.drawing.nx_pydot.read_dot (args.temp_dir+"/dot-files/cfg."+fname+".dot"))
+      print nx.info (G)
+      indexFunction(fname,G)
+
+
   
  
 

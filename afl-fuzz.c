@@ -99,7 +99,7 @@ EXP_ST u8 *in_dir,                    /* Input directory with test cases  */
           *doc_path,                  /* Path to documentation dir        */
           *target_path,               /* Path to target binary            */
           *orig_cmdline,              /* Original command line            */
-          *cfg_directory;             /* Temp dir  that contains CFG info */
+          *temp_dir;                  /* Temp dir that contains CFG info */
 
 EXP_ST u32 exec_tmout = EXEC_TIMEOUT; /* Configurable exec timeout (ms)   */
 static u32 hang_tmout = EXEC_TIMEOUT; /* Timeout used for hang det (ms)   */
@@ -316,16 +316,12 @@ static s8  interesting_8[]  = { INTERESTING_8 };
 static s16 interesting_16[] = { INTERESTING_8, INTERESTING_16 };
 static s32 interesting_32[] = { INTERESTING_8, INTERESTING_16, INTERESTING_32 };
 /* add by yangke start */
-static int margin_bb_rid[1<<16];
+static map_void_t margin_bbs;
 static int margin_bb_count=0;
 static double min_d=1.7E+308;//min distance of margin basic block, initialize in loadCFG().
-static double max_d=0.0;//max distance of current margin basic block, initialize in loadCFG().
 static double min_gd=1.7E+308;//min distance of strong connected margin basic block group, initialize in record_value_changing_mutation().
 static double max_gd=0.0;//max distance of strong connected margin basic block group, initialize in record_value_changing_mutation().
-
 /* remember interesting mutaion operation and the operateed positions */
-
-
 
 #define MAX_MUT_POS (1024) //4KB
 #define MUT_NUM 17
@@ -359,6 +355,55 @@ static unsigned threshold_cycles_wo_finds=INIT_THRESHOLD_CYCLES_WO_FINDS;
 static unsigned max_mut_loop_bound=INIT_MUT_LOOP_BOUND;
 static int mut_prior_mode=0;//flags that indicate we are in mutation prior mode
 //TODO: add more mutator argument info other than position ...
+
+
+struct position{
+	int pos;
+	int cnt;
+	struct position * next;
+};
+typedef struct mutation{
+	int code;
+	int cnt;
+	struct position *pos_list;
+	struct mutation *next;
+}Mutation;
+
+typedef struct vertex_item{
+	int rid;
+	char bbname[256];
+	double distance;//distance
+	u8 cov;//cov:1,uncov:0
+	u8 out_degree;
+	u8 is_margin;//yes:1,no:0
+	u8 is_margin_last_check;
+	u16 margin_history;
+	u8 state_based;
+	map_int_t * successors;
+	map_int_t * invalid_positions;
+	//char nid[32];
+	//char key_str[1024];
+} Node;
+
+typedef struct record{
+	hashset_t B;
+	int  M[17];
+	map_int_t P;
+	double distance;
+	struct record * next;
+} Record;
+
+static Record * record_list=NULL;
+static map_void_t record_map;
+static int record_map_initialized=0;
+static map_void_t fname2cfg;
+static int cfg_loaded=0;
+static int vertex_num=0;
+static int edge_num=0;
+static Node * target_bb=NULL;
+static char target_function[64]={'\0'};
+static int need_start_compaign=0;
+
 
 /* add by yangke end */
 
@@ -1071,48 +1116,39 @@ static inline u8 has_new_bits(u8* virgin_map) {
  */
 
 #ifdef __x86_64__
-  static  inline int has_new_var_bits(u64* virgin_var_map,int * rid_list) {
-	int ret =0;//invalid distance value
+  static  inline int has_new_var_bits(u64* virgin_var_map, Node * node_list[]) {
+	int ret = 0;//invalid distance value
 	u64* vir = (u64*) virgin_var_map;
 	u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
 	//OKF("margin_bb_count=%d",margin_bb_count);
-	for(int i=0;i<margin_bb_count;i++){
-		int rid=margin_bb_rid[i];
-		/*u8* v=(u8*)&vir[rid];
-		u8* c=(u8*)&cur[rid];
-		OKF("[%d] vir:%x %x %x %x %x %x %x %x\n",i,v[0],v[1],v[2],v[3],v[4],v[5],v[6],v[7]);
-		OKF("[%d] cur:%x %x %x %x %x %x %x %x\n",i,c[0],c[1],c[2],c[3],c[4],c[5],c[6],c[7]);*/
+	map_iter_t margin_iter = map_iter(&margin_bbs);
+	const char *key;
+	while ((key = map_next(&margin_bbs, &margin_iter))) {
+		Node *node=(Node*)*map_get(&margin_bbs,key);
+		int rid=node->rid;
 		if(unlikely(vir[rid] & (~cur[rid]))){
-		///if(unlikely(vir[rid] !=cur[rid])){
-			//find whether there exists a bit where cur is 0 while vir is 1
-			//vir: 1101
-			//cur: 1011
-			//      ^
 			vir[rid]&=cur[rid];
-			///vir[rid]=cur[rid];
-			rid_list[ret++]=rid;//return the last rid
-			//TODO test case changed by this set of mutation may affect multiple margin BBs, should return all of them.
+			node_list[ret++]=node;
 		}
 	}
-	//OKF("margin_bb_count=%d",margin_bb_count);
-	//for(int j=0;j<margin_bb_count;j++){
-	//	OKF("%d:rid=%d,cur[rid]=%llx,vir[rid]=%llx",j,rid,cur[margin_bb_rid[j]] , vir[margin_bb_rid[j]]);
-	//}
 	return ret;
   }
 #else
-  static inline int has_new_var_bits(u32* virgin_var_map) {
-	    int  ret = -1;
+  static inline int has_new_var_bits(u32* virgin_var_map, Node * node_list[]) {
+	    int ret = 0;//invalid distance value
 	    u32* vir = (u32*) virgin_var_map;
 	    u32* cur = (u32*)(trace_bits+MAP_SIZE+8);
 
-	    for(int i=0;i<margin_bb_count;i++,vir++,cur++){
-	    	int rid=margin_bb_rid[i];
-	    	if(unlikely(vir[rid] & (~cur[rid]))){
+	    map_iter_t margin_iter = map_iter(&margin_bbs);
+		const char *key;
+		while ((key = map_next(&margin_bbs, &margin_iter))) {
+			Node *node=(Node*)*map_get(&margin_bbs,key);
+			int rid=node->rid;
+			if(unlikely(vir[rid] & (~cur[rid]))){
 				vir[rid]&=cur[rid];
-				ret=rid
+				node_list[ret++]=node;
 			}
-	    }
+		}
 	    return ret;
   }
 #endif /* ^__x86_64__ */
@@ -3317,60 +3353,6 @@ static void write_crash_readme(void) {
   fclose(f);
 
 }
-/* add by yangke start */
-/* Load all static CFG as one */
-//TODO: change it as a structure
-#define MAX_VERTEX_NUM MAP_SIZE
-#define MAX_EDGE_NUM (MAP_SIZE<<1)//The max degree of a vertex is 2
-static int out_edge_index[MAX_EDGE_NUM][2];
-//int in_edge_index[MAX_EDGE_NUM][2];
-struct position{
-	int pos;
-	int cnt;
-	struct position * next;
-};
-struct mutation{
-	int code;
-	int cnt;
-	struct position *pos_list;
-	struct mutation *next;
-};
-
-struct vertex_item{
-	int rid;
-	char bbname[256];
-	double distance;//distance
-	u8 cov;//cov:1,uncov:0
-	u8 out_degree;
-	u8 is_margin;//yes:1,no:0
-	u8 is_margin_last_check;
-	u16 margin_history;
-	u8 state_based;
-	struct mutation *mut_list;
-	map_int_t * invalid_positions;
-	//char nid[32];
-	//char key_str[1024];
-};
-struct record{
-	hashset_t B;
-	int  M[17];
-	map_int_t P;
-	double distance;
-	struct record * next;
-};
-
-typedef struct record Record;
-static Record * record_list=NULL;
-static map_void_t record_map;
-static int record_map_initialized=0;
-static struct vertex_item vertex_index[MAX_VERTEX_NUM];
-static int rid2index[MAX_VERTEX_NUM];
-u8 out_edge_cov_index[MAX_EDGE_NUM];//cov:1,uncov:0
-
-static int vertex_num=0;
-static int edge_num=0;
-static int cfg_loaded=0;
-
 
 void destroy_records()
 {
@@ -3384,113 +3366,48 @@ void destroy_records()
 		free(r);
 	}
 }
-void add_position(struct mutation * mut,int pos,int cnt)
-{
-	if (mut==NULL){
-		FATAL("mut=NULL");
-	}
-	if(!mut->pos_list)
-	{
-		struct position *p=malloc(sizeof(struct position));
-		p->pos=pos;
-		p->cnt=cnt;
-		p->next=NULL;
-		mut->pos_list=p;
-	}else{
-		struct position *q=mut->pos_list;
-		while(q->next!=NULL&&q->pos!=pos)
-		{
-			q=q->next;
-		}
-		if(q->pos==pos)
-		{
-			q->cnt+=cnt;
-		}
-		else{
-			struct position *p=malloc(sizeof(struct position));
-			p->pos=pos;
-			p->cnt=cnt;
-			p->next=NULL;
-			q->next=p;
-		}
-	}
-}
-void add_mutation(int index,struct mutation * mut)
-{
-	if (index<0||index>=vertex_num){
-		FATAL("index overflow:index=%d>vertex_num=%d",index,vertex_num);
-	}
-	if (mut==NULL){
-		FATAL("mut=NULL");
-	}
-	if (!vertex_index[index].mut_list)
-	{
-		vertex_index[index].mut_list=mut;
-		mut->next=NULL;
-	}else{
-		struct mutation * m=vertex_index[index].mut_list;
-		while(m->next!=NULL && m->code!=mut->code){
-			m=m->next;
-		}
-		if (m->code==mut->code){
-			m->cnt+=mut->cnt;
-			struct position * p=mut->pos_list;
-			while(p!=NULL){
-				add_position(m,p->pos,p->cnt);
-				struct position * q=p;
-				p=p->next;
-				free(q);
-			}
-			free(mut);
 
-		}else{
-			m->next=mut;
-			mut->next=NULL;
-		}
-	}
-}
-void  delete_all_position(struct mutation* m)
+void destroy_all_cfg()
 {
-	while (m->pos_list)
-	{
-		struct position *p=m->pos_list;
-		m->pos_list=m->pos_list->next;;
-		free(p);
+	const char *fname;
+	map_iter_t iter = map_iter(&fname2cfg);
+	while ((fname = map_next(&fname2cfg, &iter))) {
+	    void **p=map_get(&fname2cfg, fname);
+	    if(!p) FATAL("fname2cfg is broken, fname=%p,rid2node=(nil)",fname);
+	    map_void_t * rid2node = (map_void_t *)*p;
+	    const char *rid_str;
+	    map_iter_t node_iter = map_iter(&rid2node);
+	    while ((rid_str = map_next(rid2node, &node_iter))) {
+	    	void **q=map_get(rid2node, rid_str);
+	    	if(!q) FATAL("rid2node is broken, rid=%p,node=(nil)",rid_str);
+	    	Node * node = (Node *)*q;
+	    	if(node->successors){
+	    		map_deinit(node->successors);
+	    		free(node->successors);
+	    		node->successors=NULL;
+	    	}
+	    	if(node->invalid_positions){
+				map_deinit(node->invalid_positions);
+				free(node->invalid_positions);
+				node->invalid_positions=NULL;
+	    	}
+	    	free(node);
+	    	node=NULL;
+	    }
+	    map_deinit(rid2node);
+	    free(rid2node);
+	    rid2node=NULL;
 	}
-}
-void delete_all_mutation(int index)
-{
-	if (index<0||index>=vertex_num){
-		FATAL("index overflow:index=%d>vertex_num=%d",index,vertex_num);
-	}
-
-	while (vertex_index[index].mut_list){
-		struct mutation* m=vertex_index[index].mut_list;
-		vertex_index[index].mut_list=vertex_index[index].mut_list->next;
-		while (m->pos_list)
-		{
-			struct position *p=m->pos_list;
-			m->pos_list=m->pos_list->next;;
-			free(p);
-		}
-		free(m);
-	}
+	map_deinit(&fname2cfg);
+	map_deinit(&margin_bbs);
+	//map_deinit(&global_rid2node);
+	//map_deinit(&global_rid2fnames);
 }
 
-void destroy_vertex_index()
-{
-	for(int i=0;i<vertex_num;i++)
-	{
-		delete_all_mutation(i);
-		if(vertex_index[i].invalid_positions)
-			map_deinit(vertex_index[i].invalid_positions);
-
-	}
-}
-static void loadCFG() {
+static map_void_t * loadFuncCFG(char * fname) {
+	OKF("Load CFG for %s",fname);
 	/*1. init vetex_index */
-	u8 *fn = alloc_printf("%s/%s",cfg_directory, "node_index.txt");
-	//OKF("Vertex_Index file:%s",fn);
+	u8 *fn = alloc_printf("%s/index/%s.node_index.txt",temp_dir, fname);
 
 	FILE * f;
 	if (!(f = fopen(fn, "r"))) {
@@ -3499,131 +3416,147 @@ static void loadCFG() {
 
 	}
 	vertex_num=0;
+	map_void_t * rid2node =(map_void_t *)malloc(sizeof(map_void_t));
+	map_init(rid2node);
     u8 tmp[MAX_LINE];
 	while (fgets(tmp, MAX_LINE, f)) {
-		if(vertex_num>=MAX_VERTEX_NUM){
-			FATAL("Error occured when loading CFG, vertexes overflow!!");
-		}
 		char *rid_str=strtok(tmp,"|");
 		int rid=atoi(rid_str);
 		strtok(NULL,"|");
 		//char * nid=strtok(NULL,"|");
 		char * key_str=strtok(NULL,"|");
+		Node * node=(Node *)malloc(sizeof(Node));
 		char * bbname=strtok(key_str,";");
 		if (strlen(bbname)==0)
-			strcpy(vertex_index[vertex_num].bbname,"@");
+			strcpy(node->bbname,"@");
 		else{
-			strcpy(vertex_index[vertex_num].bbname,bbname);
-			//OKF("init bbname=%s",vertex_index[vertex_num].bbname);
+			strcpy(node->bbname,bbname);
 		}
-		//OKF("rid:%d,p=%s,nid=%s,bbname=%s",rid,nid,vertex_index[vertex_num].bbname);
-		vertex_index[vertex_num].rid=rid;
-		vertex_index[vertex_num].cov=0;
-		vertex_index[vertex_num].distance=-1.0;
-		vertex_index[vertex_num].out_degree=0;
-		vertex_index[vertex_num].is_margin=0;
-		vertex_index[vertex_num].is_margin_last_check=0;
-		vertex_index[vertex_num].margin_history=0;
-		vertex_index[vertex_num].state_based=0;
-		vertex_index[vertex_num].mut_list=NULL;
-		vertex_index[vertex_num].invalid_positions=NULL;
-		rid2index[rid]=vertex_num;
+		//if(!strcmp("ttgload.c:2712:12",bbname))FATAL("###########%s,rid=%d",bbname,rid);
+		node->rid=rid;
+		node->cov=0;
+		node->distance=-1.0;
+		node->out_degree=0;
+		node->is_margin=0;
+		node->is_margin_last_check=0;
+		node->margin_history=0;
+		node->state_based=0;
+		node->successors=NULL;
+		node->invalid_positions=NULL;
+		map_set(rid2node, rid_str, node);/*
+		void **p=map_get(global_rid2node, rid_str);
+		if(!p){
+			map_set(global_rid2node, rid_str, node);
+		}else if(DUL_RID==*p){//DUL_RID==*p
+			map_void_t * fnames = (map_void_t *)* map_get(global_rid2fnames,rid_str);
+			map_set(fnames, fname, NULL);
+		}else{
+			char * fname_pre= (char *)*p;
+			map_void_t* fnames=(map_void_t *)malloc(sizeof(map_void_t));
+			map_set(fnames, fname_pre, NULL);
+			map_set(fnames, fname, NULL);
+			map_set(global_rid2fnames, rid_str, fnames);
+			map_set(global_rid2node, rid_str, DUL_RID);
+		}*/
+
 		vertex_num++;
 	}
-	vertex_index[vertex_num].rid=-1;//denote the end of vertex index
-	//OKF("Total: %d vertexes.",vertex_num);
+	if(vertex_num==0){
+		return NULL;
+	}
 	ck_free(fn);
 	fclose(f);
 
     /*2. init out_edge_index */
-	fn = alloc_printf("%s/%s",cfg_directory, "out_edge_index.txt");
-	//OKF("Out Edge Index file:%s",fn);
+	fn = alloc_printf("%s/index/%s.out_edge_index.txt", temp_dir, fname);
+
 	if (!(f = fopen(fn, "r"))) {
 		ck_free(fn);
 		FATAL("No such file or directory: %s",fn);
 	}
 	edge_num=0;
 	while (fgets(tmp, MAX_LINE, f)) {
-		if(edge_num>=MAX_EDGE_NUM){
-			FATAL("Error occured when loading CFG, edges overflow!!");
-		}
-		///OKF("orig_out:%s",strtok(tmp,"\n"));
+
 		char * first=strtok(tmp,",");
 		char * second=strtok(NULL,",");
-
-		out_edge_index[edge_num][0]=atoi(first);
-		out_edge_index[edge_num][1]=atoi(second);
-		out_edge_cov_index[edge_num]=0;//mix coverage init process.TODO: decouple
-		int idx=rid2index[out_edge_index[edge_num][0]];
-		if(idx<0||idx>=vertex_num){
-			FATAL("Wrong rid:%d, in file:%s:%d",out_edge_index[edge_num][0],fn,edge_num+1);
+		int last=strlen(second)-1;
+		second[last]=second[last]=='\n'?'\0':second[last];//strip the '\n'
+		void **p= map_get(rid2node,first);
+		if(!p){
+			FATAL("Cannot find rid:%s in rid2node.", first);
 		}
-		vertex_index[rid2index[out_edge_index[edge_num][0]]].out_degree+=1;
-		//OKF("edge_out:%d,%d",out_edge_index[edge_num][0],out_edge_index[edge_num][1]);
+		Node* node=(Node*)*p;
+		if(node->successors==NULL){
+			node->successors=(map_int_t *)malloc(sizeof(map_int_t));
+			map_init(node->successors);
+		}
+
+		if(!map_get(node->successors,second)){
+			node->out_degree+=1;
+		}//ingore muti-edges to same node
+		map_set(node->successors,second,0);//cov:0
 		edge_num++;
 	}
-	out_edge_index[edge_num][0]=-1;
-	out_edge_index[edge_num][1]=-1;//elements ends with value -1
-	//OKF("Total: %d out_edges.",edge_num);
+	OKF("Total: %d out_edges.",edge_num);
 	ck_free(fn);
 	fclose(f);
 
 	/*3. init reachable bbname list */
-	fn = alloc_printf("%s/%s",cfg_directory, "distance.cfg.txt");
+	fn = alloc_printf("%s/%s",temp_dir, "distance.cfg.txt");
 	if (!(f = fopen(fn, "r"))) {
 		ck_free(fn);
 		FATAL("No such file or directory: %s",fn);
 	}
 	int rlist_num=0;
 	while (fgets(tmp, MAX_LINE, f)) {
-		///OKF("orig_out:%s",strtok(tmp,"\n"));
-		char * bbname_file_line=strtok(tmp,",");
+		char * file_and_line=strtok(tmp,",");
+		if(!strstr(file_and_line,":")) continue;
 		char * d_str=strtok(NULL,",");
-
 		double d=atof(d_str);
-		//OKF("%s,%f",d_str,d);
-		for (int i=0;i<vertex_num;i++)
+		const char *key;
+		map_iter_t iter = map_iter(&rid2node);
+		while ((key = map_next(rid2node, &iter)))
 		{
-			//OKF("%s,%s",vertex_index[i].bbname,bbname);
-			if (strstr(vertex_index[i].bbname,bbname_file_line))
+		    void **p=map_get(rid2node, key);
+		    if(!p) FATAL("rid2node contains NULL node");
+			Node* node=(Node *)*p;
+			if (strstr(node->bbname,file_and_line))
 			{
-				vertex_index[i].distance=d;
-				//OKF("%d,%s reachable",vertex_index[i].rid,vertex_index[i].bbname);
+				node->distance=d;
 				rlist_num++;//break; //Don't break, because there may be vertexes with same bbname. TODO:verify and fix it
 			}
 		}
 	}
+	/*if(!strcmp(fname,"TT_Load_Glyph")){
+	void **p=map_get(rid2node,"24289");
+	FATAL("#########%f",((Node*)*p)->distance);}*/
 	OKF("Total: %d reachable bbname.",rlist_num);
 	ck_free(fn);
 	fclose(f);
-    /* in_edge_index is not useful currently but we keep it for sake of future cite */
-	/*
-	fn = alloc_printf("%s/%s",cfg_directory, "/in_edge_index.txt");
-	OKF("Load in_edge_index from file %s",fn);
+	cfg_loaded=1;
+	return rid2node;
+}
+static void loadCFG()
+{
+	u8 *fn = alloc_printf("%s/%s",temp_dir, "/distance.callgraph.txt");
+	FILE * f;
 	if (!(f = fopen(fn, "r"))) {
 		ck_free(fn);
-	}
-	edge_num=0;
-	while (fgets(tmp, MAX_LINE, f)) {
-		if(edge_num>=MAX_EDGE_NUM){
-			FATAL("Error occured when loading CFG, edges overflow!!");
-		}
-		///OKF("orig_in:%s",strtok(tmp,"\n"));
-		char * first=strtok(tmp,",");
-		char * second=strtok(NULL,",");
+		FATAL("No such file or directory: %s",fn);
 
-		in_edge_index[edge_num][0]=atoi(first);
-		in_edge_index[edge_num][1]=atoi(second);
-		OKF("edge_in:%d,%d",in_edge_index[edge_num][0],in_edge_index[edge_num][1]);
-		edge_num++;
 	}
-	in_edge_index[edge_num][0]=-1;in_edge_index[edge_num][1]=-1;//elements ends with value -1
-	OKF("Total: %d in_edges.",edge_num);
+	char line[MAX_LINE];
+	map_init(&fname2cfg);
+	//map_init(&global_rid2node);
+	//map_init(&global_rid2fnames);
+	while (fgets(line, MAX_LINE, f)) {
+		char * fname=strtok(line,",");
+		map_void_t * rid2node= loadFuncCFG(fname);
+		if(rid2node)
+			map_set(&fname2cfg, fname, rid2node);
+	}
 	ck_free(fn);
 	fclose(f);
-	*/
-	cfg_loaded=1;
-	//FATAL("KILL BY YANGKE loadCFG.");
 }
 
 
@@ -3631,92 +3564,117 @@ static void loadCFG() {
 /* prioritize Basic Blocks(idendified by random id(RID)) located at the margin
  * area of the covered code.
  */
-static int target_index=-1;
-static int need_start_compaign=0;
 
 static void update_margin_bbs()
 {
     /*1. update coverage information and clean margin*/
-	for(int i=0;i<edge_num && out_edge_index[i][0]!=-1;i++)
-	{
-		int start=out_edge_index[i][0];
-		int end=out_edge_index[i][1];
-		if (virgin_bits[(start>>1)^end]!=0xff)
-		{
-			out_edge_cov_index[i]=1;
-			vertex_index[rid2index[start]].cov=1;
-			vertex_index[rid2index[end]].cov=1;
+	const char *fname;
+	map_iter_t iter = map_iter(&fname2cfg);
+	while ((fname = map_next(&fname2cfg, &iter))) {
+		void **p=map_get(&fname2cfg, fname);
+		if(!p) FATAL("fname2cfg is broken, fname=%s,rid2node=(nil)",fname);
+		map_void_t * rid2node = (map_void_t *)*p;
+		const char *rid_str;
+		map_iter_t node_iter = map_iter(&rid2node);
+		while ((rid_str = map_next(rid2node, &node_iter))) {
+			void **q=map_get(rid2node, rid_str);
+			if(!q) FATAL("rid2node is broken, rid=%s,node=(nil)",rid_str);
+			Node * node = (Node *)*q;
+			if(!node->successors) continue;
+			int start=atoi(rid_str);
+			const char *end_str;
+			map_iter_t succ_iter = map_iter(node->successors);
+			while ((end_str = map_next(node->successors, &succ_iter))) {
+				int end=atoi(end_str);
+				if (virgin_bits[(start>>1)^end]!=0xff)
+				{
+					map_set(node->successors,end_str,1);
+					node->cov=1;
+					if(!map_get(rid2node, end_str)){
+						FATAL("Wierd,end_str=%s,fname=%s",end_str,fname);
+					}
+					((Node *)*map_get(rid2node, end_str))->cov=1;
+
+				}
+			}
 		}
 	}
 
 	/*2 clean margin record*/
-	for(int i=0;i<vertex_num && vertex_index[i].rid!=-1 ;i++)
-	{
-		if(vertex_index[i].out_degree>1)
-		{
-			vertex_index[i].is_margin_last_check=vertex_index[i].is_margin;
-			vertex_index[i].is_margin=0;
-		}
-		margin_bb_rid[i]=-1;
-	}
-	margin_bb_rid[vertex_num]=-1;
+	map_deinit(&margin_bbs);
+	map_init(&margin_bbs);
 	margin_bb_count=0;
 
 	/*3. find and record margin basic blocks.*/
-	for(int i=0;i<edge_num && out_edge_index[i][0]!=-1;i++)
-	{
-		int start=out_edge_index[i][0];
-		int end=out_edge_index[i][1];
-		int start_idx=rid2index[start];
-		//OKF("start:%d,bbname=%s,out_degree:%d,distance=%f",start,vertex_index[start_idx].bbname,vertex_index[start_idx].out_degree,vertex_index[start_idx].distance);
-		if(vertex_index[start_idx].out_degree>1 && vertex_index[start_idx].distance>0.0){
+	//for each function
+	iter = map_iter(&fname2cfg);
+	while ((fname = map_next(&fname2cfg, &iter))) {
+		void **p=map_get(&fname2cfg, fname);
+		if(!p) FATAL("fname2cfg is broken, fname=%s,rid2node=(nil)",fname);
+		map_void_t * rid2node = (map_void_t *)*p;
+		const char *rid_str;
+		map_iter_t node_iter = map_iter(&rid2node);
+		//for each basic block:BB_start
+		while ((rid_str = map_next(rid2node, &node_iter))) {
+			void **q=map_get(rid2node, rid_str);
+			if(!q) FATAL("rid2node is broken, rid=%s,node=(nil)",rid_str);
+			Node * node = (Node *)*q;
+			int start=atoi(rid_str);
+			const char *end_str;
+			if(node->cov==1 && node->out_degree>1){
+				node->is_margin=0;
+				map_iter_t succ_iter = map_iter(node->successors);
+				//for each successors of BB_start
+				while ((end_str = map_next(node->successors, &succ_iter))) {
+					//Margin BB condition:
+					//BB_start(cov:1)-[cov:0]->BB_end(distance>0)
+					int cov=*map_get(node->successors,end_str);
+					//if (virgin_bits[(start>>1)^end]==0xff && ((Node*)*map_get(rid2node,end_str))->distance>0.0)
+					if (!cov && ((Node*)*map_get(rid2node,end_str))->distance>0.0)
+					{
+						char * key=alloc_printf("%p,%s",node,fname);
+						map_set(&margin_bbs,key,node);
+						ck_free(key);
+						if(node->margin_history==0){
+							if(node->distance<min_d && node->distance >-0.0001)
+							{
+								if(!strcmp(node->bbname,"ttgload.c:2712:12"))
+								{
+									//FATAL("ttgload.c:2712:12 distance=%f",node->distance);
+								}
+								min_d=node->distance;
+								need_start_compaign=1;
+								target_bb=node;
+								strcpy(target_function,fname);
+							}
 
-			if (virgin_bits[(start>>1)^end]==0xff && vertex_index[start_idx].cov==1){
-				if (vertex_index[start_idx].is_margin_last_check==0){//new margin found
-					/*
-					//DEBUG CODE
-					u8 *fn = alloc_printf("%s/%s",cfg_directory, "out_edge_index.dot");
-					FILE * f;
-					if (!(f = fopen(fn, "r+"))) {
-						ck_free(fn);
-						return;
+							//DEBUG CODE
+							u8 *fn = alloc_printf("%s/index/%s.out_edge_index.dot",temp_dir,fname);
+							FILE * f;
+							if (!(f = fopen(fn, "r+"))) {
+								ck_free(fn);
+								return;
+							}
+							fseek(f,-2L,SEEK_END);
+							u8* node_str=alloc_printf("\n%d [label=\"%d\",color=Red ,shape=record];\n}",start,start);
+							fputs(node_str,f);
+							fclose(f);
+							ck_free(node_str);
+							ck_free(fn);
+							char *cmd=alloc_printf("dot -Tsvg %s/index/%s.out_edge_index.dot -o %s/index/%s.out_edge_index.svg",temp_dir,fname,temp_dir,fname);
+							system(cmd);
+							ck_free(cmd);
+						}else{
+							//margin still not solved
+						}
+						node->margin_history+=1;
+						node->is_margin=1;
+						margin_bb_count++;
+						break;
 					}
-					fseek(f,-2L,SEEK_END);
-					u8* node_str=alloc_printf("\n%d [label=\"%d\",color=Red ,shape=record];\n}",start,start);
-					fputs(node_str,f);
-					fclose(f);
-					ck_free(node_str);
-					ck_free(fn);
-					char *cmd=alloc_printf("dot -Tsvg %s/out_edge_index.dot -o %s/out_edge_index.svg",cfg_directory,cfg_directory);
-					system(cmd);
-					ck_free(cmd);*/
-				}else{
-					//margin is still not solved
-					//current solving stratedy does not conquer the problem yet.
 				}
-				vertex_index[start_idx].margin_history+=1;
-				vertex_index[start_idx].is_margin=1;
-				margin_bb_rid[margin_bb_count++]=start;
 			}
-
 		}
-	}
-	int min_d_index=-1;
-	double new_min_d=1.7E+308;
-	for (int i=0;i<margin_bb_count;i++)
-	{
-		double it_d=vertex_index[rid2index[margin_bb_rid[i]]].distance;
-		if(it_d<min_d){
-			new_min_d=it_d;
-			min_d_index=rid2index[margin_bb_rid[i]];
-		}
-		if(it_d>max_d)
-			max_d=it_d;
-	}
-	if(new_min_d<min_d){
-		min_d=new_min_d;
-		need_start_compaign=1;
-		target_index=min_d_index;
 	}
 	//FATAL("KILL BY YANGKE update_margin_bbs.");
 }
@@ -3885,9 +3843,9 @@ static inline void print_mutation_table_bak(int index)
 	}
 }*/
 /* add by yangke start */
-static inline void record_value_changing_mutation(int ridlist[],int size);
+static inline void record_value_changing_mutation(Node* node_list[],int size);
 static inline void record_value_changing_mutation2(int index,int weight);
-static inline void add_to_invlaid_positions(int index);
+//static inline void add_to_invlaid_positions(int index);
 static inline void cleanup_value_changing_mutation_record();
 static int branch_attack_mode=0;
 
@@ -3917,51 +3875,30 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 		  if (!cfg_loaded)
 			  loadCFG();
 		  update_margin_bbs();
-		  int ridlist[margin_bb_count];
-		  int cnt=has_new_var_bits(virgin_var_bits,ridlist);
-		  char index_list_str[MAX_MUT_POS/4];
-		  char *ptr=index_list_str;
+		  Node * node_list[margin_bb_count];
+		  int cnt=has_new_var_bits(virgin_var_bits,node_list);
+		  int rid_list_str_size=margin_bb_count<<6;
+		  char rid_list_str[rid_list_str_size];
+		  char *ptr=rid_list_str;
+		  //u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
 		  if (cnt>0){
 			  for(int i=0;i<cnt;i++){
-				  //int index=rid2index[ridlist[i]];
-				  //int l=sprintf(ptr,"(%d,%s),",ridlist[i],vertex_index[index].bbname);
-				  int l=sprintf(ptr,"%d,",ridlist[i]);
-				  ptr+=l;
-				  if(ptr-index_list_str>=MAX_MUT_POS/4){
+				  //ptr+=sprintf(ptr,"%p,%d,%llx;",node_list[i], node_list[i]->rid, cur[node_list[i]->rid]);
+				  ptr+=sprintf(ptr,"%d,",node_list[i]->rid);
+				  if(ptr-rid_list_str>=rid_list_str_size){
 					  FATAL("ptr Overflow!:%p",ptr);
 				  }
 			  }
 			  if(!mut_prior_mode){
 				  mut_prior_mode=1;//OKF("Switch to mut_prior_mode!");
 			  }
-			  //WARNF("%d affected branch:%s\n",cnt,index_list_str);
-			  record_value_changing_mutation(ridlist,cnt);
-			  /*
-			  u8 * log_file_name=alloc_printf("%s/value_affected_branch.txt", out_dir);
-		      u8 * info=alloc_printf("%d affected branch:%s,margin_bb_count:%d\n",cnt,index_list_str,margin_bb_count);
-		      int debug_fd = open(log_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
-		      if (debug_fd < 0) PFATAL("Unable to create '%s'", log_file_name);
-		      ck_write(debug_fd, info, strlen(info), log_file_name);
-		      close(debug_fd);
-		      ck_free(info);
-		      ck_free(log_file_name);*/
+			  WARNF("%d affected branch:%s\n",cnt,rid_list_str);
+			  record_value_changing_mutation(node_list,cnt);
 		  }else{
-			  if (!branch_attack_mode && target_index!=-1 && !vertex_index[target_index].state_based &&  cycles_wo_finds >=len*10){
-				  /*char str[1024];
-				  char *ptr=str;
-				  for(int i=0;i<vertex_num;i++)
-				  {
-					  //vertex_index[target_index].rid
-					  ptr+=sprintf(ptr,"%d",vertex_index[i].state_based);
-				  }
-				  OKF("%d:0,%s",vertex_index[target_index].rid,str);*/
-				  vertex_index[target_index].state_based=1;
+			  if (!branch_attack_mode && target_bb!=NULL && !target_bb->state_based &&  cycles_wo_finds >=len*10){
+
+				  target_bb->state_based=1;
 				  //cleanup_value_changing_mutation_record();
-				  /*char key[10];
-				  sprintf(key,"%d",vertex_index[target_index].rid);
-				  if(record_list||map_get(&record_map,key)){
-					  FATAL("error");
-				  }*/
 			  }
 			  /*for(int i=0;i<margin_bb_count;i++)
 			  {
@@ -4047,7 +3984,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
 			//t1=t2=t3=0;
 			//cleanup_value_changing_mutation_record();
-			if (!branch_attack_mode && target_index!=-1 && vertex_index[target_index].state_based){
+			if (!branch_attack_mode && target_bb && target_bb->state_based){
 				cleanup_value_changing_mutation_record();
 				WARNF("clean UP!");
 			}
@@ -4227,7 +4164,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
       fclose(plot_file);
 	  destroy_queue();
 	  destroy_extras();
-	  destroy_vertex_index();
+	  destroy_all_cfg();
 	  destroy_records();
 	  ck_free(target_path);
 	  ck_free(sync_id);
@@ -6022,7 +5959,7 @@ static inline void cleanup_mutation_record()
 		one_fuzz_mut_cnt[i]=0;
 	}
 }
-
+/*
 static inline void add_to_invlaid_positions(int index)
 {
 	if(vertex_index[index].invalid_positions==NULL){
@@ -6061,6 +5998,7 @@ static inline void add_to_invlaid_positions(int index)
 		}
 	}
 }
+*/
 static inline void record_value_changing_mutation2(int index,int quality)
 {
 	//quality=1 :margin branch var changed
@@ -6100,7 +6038,7 @@ static inline void record_value_changing_mutation2(int index,int quality)
 			total_monitored_mut_cnt+=tmp_mut_cnt[i];
 		}
 	}
-	if(index<0||vertex_index[index].rid==38124)
+	if(!target_bb||target_bb->rid==38124)
 	{
 		  //WARNF("DEBUG for libturbojpeg jdmarker:659 FIND MUT THAT AFFECT TARGET BB!");
 		  WARNF("DEBUG for maze.c:106!");
@@ -6261,7 +6199,7 @@ static inline void  merge_record(Record* to, Record* from)
 	from->next=NULL;//clear memory
 	free(from);
 }
-static void record_value_changing_mutation(int ridlist[],int size)
+static inline void record_value_changing_mutation(Node * node_list[],int size)
 {
 	if(size<=0){
 		FATAL("ridlist size must >0, cur:%d",size);
@@ -6274,9 +6212,9 @@ static void record_value_changing_mutation(int ridlist[],int size)
 	Record * tmp_r=NULL;
 	for(int i=0;i<size;i++)
 	{
-		char key[16];
-		sprintf(key,"%d",ridlist[i]);
-		void ** p=map_get(&record_map, key);
+		char node_ptr_str[16];
+		sprintf(node_ptr_str,"%p",node_list[i]);
+		void ** p=map_get(&record_map, node_ptr_str);
 		if(p){
 			Record *cur_r=*p;
 			if(!tmp_r){
@@ -6296,20 +6234,19 @@ static void record_value_changing_mutation(int ridlist[],int size)
 		int disjoint_sum=0;
 		int disjoint_cnt=0;
 		for(int i=0;i<size;i++){
-			if(!hashset_is_member(r->B,(void *)(size_t)ridlist[i])){
-				hashset_add(r->B,(void *)(size_t)ridlist[i]);
-				int index=rid2index[ridlist[i]];
-				if(vertex_index[index].distance<0){
-					FATAL("Unreachable BB rid:%d",ridlist[i]);
-				}
-				char rid_str[16];
-				sprintf(rid_str,"%d",ridlist[i]);
-				map_set(&record_map, rid_str, r);
-				disjoint_sum+=vertex_index[index].distance;
+			if(!hashset_is_member(r->B,node_list[i])){
+				hashset_add(r->B,node_list[i]);
+				char node_ptr_str[32];
+				sprintf(node_ptr_str,"%p",node_list[i]);
+				map_set(&record_map, node_ptr_str, r);
+				disjoint_sum+=node_list[i]->distance;
 				disjoint_cnt++;
 			}
 		}
 		r->distance=(r->distance*origin_num+disjoint_sum)/(origin_num+disjoint_cnt);
+		if(r->distance-0.0<0.0001){
+			FATAL("Illegal Zero Distance3! r->distance=%f",r->distance);
+		}
 		if(r->distance<min_gd){
 			min_gd=r->distance;
 		}
@@ -6349,16 +6286,16 @@ static void record_value_changing_mutation(int ridlist[],int size)
 		double sum=0.0;
 		for(int i=0;i<size;i++)
 		{
-			hashset_add(r->B,(void *)(size_t)ridlist[i]);
-			if(vertex_index[rid2index[ridlist[i]]].distance<0){
-				FATAL("Unreachable BB rid:%d",ridlist[i]);
-			}
-			char rid_str[16];
-			sprintf(rid_str,"%d",ridlist[i]);
-			map_set(&record_map, rid_str, r);
-			sum+=vertex_index[rid2index[ridlist[i]]].distance;
+			hashset_add(r->B,node_list[i]);
+			char node_ptr_str[32];
+			sprintf(node_ptr_str,"%p",node_list[i]);
+			map_set(&record_map, node_ptr_str, r);
+			sum+=node_list[i]->distance;
 		}
 		r->distance=sum/size;
+		if(r->distance-0.0<0.0001){
+			FATAL("Illegal Zero Distance2! r->distance=%f",r->distance);
+		}
 		if(r->distance<min_gd){
 			min_gd=r->distance;
 		}
@@ -6463,119 +6400,6 @@ static inline int binary_search(const int values[],int len,int query_value){
 	}
 	return low;
 	//low is the index we want.
-}
-static inline void dispatch_random_bak(u32 range,u32 * arg)
-{
-	int rand=UR(100);
-    if (mut_prior_mode==1 && rand<VALUE_CHANGE_STRATEGY_BOUND){//75%
-    	if (margin_bb_count==0){//make sure margin_bb has been calculated
-			FATAL("Invalid margin_bb_count=%d",margin_bb_count);
-		}
-    	int valid_margin[margin_bb_count];
-    	int bound_values[margin_bb_count];
-    	int valid_margin_cnt=0;
-    	int sum=0;
-    	for(int index=0;index<vertex_num;index++){
-    	/*for(int i=0;i<margin_bb_count;i++){
-    		int index=rid2index[margin_bb_rid[i]];
-			if(!vertex_index[index].is_margin){
-				FATAL("Margin BB update Error! Invalid margin_bb_rid!");
-			}
-			if(max_d<0 || vertex_index[index].distance<0 || max_d<vertex_index[index].distance)
-			{
-				FATAL("Invalid distance max_d=%f,d=%f",max_d,vertex_index[index].distance);
-			}*/
-			if(vertex_index[index].mut_list && vertex_index[index].distance>0)
-			{
-				valid_margin[valid_margin_cnt]=index;
-
-				//sum+=100*(max_d-vertex_index[index].distance)/(max_d-min_d+1)+1;
-				//sum+=100/(vertex_index[index].distance+1)+1;
-				double d=vertex_index[index].distance;
-				double s=(max_d-d);
-				if(vertex_index[index].is_margin)
-					sum+=2*s+1;
-				else
-					sum+=s+1;
-				if(sum<=0){
-					FATAL("Integer overflow sum=%d",sum);
-				}
-				bound_values[valid_margin_cnt]=sum;//bounds which refer to index possibility in x axis
-				valid_margin_cnt++;
-			}
-		}
-    	if(valid_margin_cnt<=0)
-    		goto random;
-    	//OKF("valid_margin_cnt=%d,sum=%d",valid_margin_cnt,sum);
-    	int margin_index=binary_search(bound_values,valid_margin_cnt,UR(sum));
-    	//OKF("margin_index=%d",margin_index);
-    	int vid=valid_margin[margin_index];
-
-    	int valid_mut[MUT_NUM];
-    	int bound_values2[MUT_NUM];
-    	int valid_mut_cnt=0;
-    	int sum2=0;
-    	//OKF("vid=%d",vid);
-		for(struct mutation * m=vertex_index[vid].mut_list;m!=NULL;m=m->next){
-			valid_mut[valid_mut_cnt]=m->code;//mut code
-			sum2+=m->cnt;//OKF("add mut_cnt %d",m->cnt);
-			bound_values2[valid_mut_cnt]=sum2;//bounds which refer to index possibility in x axis
-			valid_mut_cnt++;
-		}
-		if(valid_mut_cnt<=0)
-		    goto random;
-    	int mut_index=binary_search(bound_values2,valid_mut_cnt,UR(sum2));
-		arg[0]=valid_mut[mut_index];
-    	//arg[0]=valid_mut[UR(valid_mut_cnt)];
-
-
-		if(rand<60){//60%
-			struct mutation * m;
-			for(m=vertex_index[vid].mut_list;m->code!=arg[0]&&m!=NULL;m=m->next);
-			if(!m)FATAL("ERROR");
-			int valid_pos[MAX_MUT_POS];
-			int bound_values3[MAX_MUT_POS];
-			int valid_pos_cnt=0;
-			int sum3=0;
-			for(struct position *p=m->pos_list;p!=NULL;p=p->next){
-
-				valid_pos[valid_pos_cnt]=p->pos;
-				sum3+=p->cnt;
-				bound_values3[valid_pos_cnt]=sum3;
-				valid_pos_cnt++;
-				if (valid_pos_cnt >=MAX_MUT_POS){
-					FATAL("Overflow caused by valid_pos_cnt:%d>MAX_MUT_POS=%d",valid_pos_cnt,MAX_MUT_POS);
-				}
-			}
-			if(valid_pos_cnt<=0)
-			{
-				FATAL("Invalid position count: valid_pos_cnt=%d",valid_pos_cnt);
-				//arg[1]=-1;monitor_mut++;
-				//return;
-			}
-			//arg[1]=valid_pos[UR(valid_pos_cnt)];
-			int pos_index=binary_search(bound_values3,valid_pos_cnt,UR(sum3));
-			arg[1]=valid_pos[pos_index];
-			switch (arg[0]){
-			case 0:
-				arg[1]=(arg[1]<<3)+UR(8);
-				break;
-			default:
-				;
-			}
-		}else{//15%
-			arg[1]=-1;
-		}/*else{
-			arg[0]=UR(range);
-		}*/
-		monitor_mut++;
-		return;
-    }
-random:
-	arg[0]=UR(range);
-	arg[1]=-1;
-	random_mut++;
-	return;
 }
 
 static int pos_inc=0;
@@ -6699,13 +6523,13 @@ static inline void dispatch_random(u32 range,s32 len,u32 * arg)
 		}
 		//int havoc_mut_list[]={11,12,13,14,16};
 		int *search_round=&search_round1;
-		if(target_index==-1||vertex_index[target_index].state_based){
+		if(!target_bb||target_bb->state_based){
 			goto monitor;
 		}
 		if(need_start_compaign){
 			//start a compaign to attack this branch
 			branch_attack_mode=1;
-			WARNF("start attack %d",vertex_index[target_index].rid);
+			WARNF("start attack %d",target_bb->rid);
 			linear_search=1;
 			search_round1=0;
 			search_round2=0;
@@ -6733,7 +6557,7 @@ static inline void dispatch_random(u32 range,s32 len,u32 * arg)
 			arg[1]=pos_inc++;
 			//OKF("C mut=%d,pos=%d",arg[0],arg[1]);
 			return;
-		}/*else if(target_index!=-1 && branch_attack_mode && linear_search && search_round2<5){
+		}/*else if(target_bb && branch_attack_mode && linear_search && search_round2<5){
 			OKF("Linear meek search discovered nothing! Maybe we need Clone, Insert or Delete mutations");
 			search_round=&search_round2;
 			search_round2++;
@@ -6745,14 +6569,14 @@ static inline void dispatch_random(u32 range,s32 len,u32 * arg)
 		}*/else if(branch_attack_mode && mutator_search>0){
 			int just_finish_linear_search=0;
 			char rid_str[16];
-			sprintf(rid_str,"%d",vertex_index[target_index].rid);
+			sprintf(rid_str,"%d",target_bb->rid);
 			void ** p=map_get(&record_map,rid_str);
 			if(linear_search){
 				linear_search=0;
 				just_finish_linear_search=1;
-				WARNF("finish linear search for %d %s, scaned:%d",vertex_index[target_index].rid,vertex_index[target_index].bbname,pos_inc);
+				WARNF("finish linear search for %d %s, scaned:%d",target_bb->rid,target_bb->bbname,pos_inc);
 				if(!p){
-					vertex_index[target_index].state_based=1;
+					target_bb->state_based=1;
 					branch_attack_mode=0;
 					mutator_search=-1;
 					goto monitor;
@@ -6767,7 +6591,7 @@ static inline void dispatch_random(u32 range,s32 len,u32 * arg)
 			arg[1]=gen_pos_from_record(r,just_finish_linear_search);
 			mutator_search--;
 			if(mutator_search<=0){
-				branch_attack_mode=0;//target_index is not state_based, now we utilize the records to solve it
+				branch_attack_mode=0;//target_bb is not state_based, now we utilize the records to solve it
 			}
 			return;
 		}
@@ -6822,7 +6646,7 @@ monitor:
 			if (mut_prior_mode==1 && valid_mut_cnt>0 && rand<VALUE_CHANGE_STRATEGY_BOUND){//75%
 				//select mutation
 				int th=35;//35//40;
-				if(vertex_index[target_index].state_based){
+				if(target_bb->state_based){
 					th=40;//40//75
 				}
 				if(perfect_mut_cnt>0 && rand <th){
@@ -6834,14 +6658,14 @@ monitor:
 				}else{
 					arg[0]=UR(range);
 				}
-				if(vertex_index[target_index].state_based && rand%2>0){
+				if(target_bb->state_based && rand%2>0){
 					arg[1]=-1;
 				}else{
 					arg[1]=gen_pos_from_record(r,0);
 				}
 				//select position
 
-//				if(vertex_index[target_index].state_based){//share position
+//				if(target_bb->state_based){//share position
 //					arg[1]=gen_pos_from_record_list(0);
 //				}else{
 //					arg[1]=gen_pos_from_record(r,0);
@@ -6859,121 +6683,7 @@ random:
 	}
 }
 
-static inline void dispatch_random_bak_bak(u32 range,u32 * arg)
-{
-	int valid_mut[MUT_NUM];
-	int bound_values[MUT_NUM];
-	int valid_mut_cnt=0;
-	int sum=0;
 
-	int perfect_mut[MUT_NUM];
-	int perfect_mut_cnt=0;
-
-	int valid_pos[MAX_MUT_POS];
-	int bound_values3[MAX_MUT_POS];
-	int valid_pos_cnt=0;
-	int sum3=0;
-
-	if (mut_prior_mode){
-		for(int i=1;i<MUT_NUM;i++)
-		{
-			if (mut_cnt[i]>0)
-			{
-//				valid_mut[valid_mut_cnt]=i;//mut code
-//				sum+=mut_cnt[i];
-//				bound_values[valid_mut_cnt]=sum;//bounds which refer to index possibility in x axis
-//				valid_mut_cnt++;
-				for(int j=0;j<MAX_MUT_POS;j++)
-				{
-					if(tmp_mut[i][j]>0)
-					{
-						valid_pos[valid_pos_cnt]=j;
-						sum3+=tmp_mut[i][j];
-						bound_values3[valid_pos_cnt]=sum3;
-						valid_pos_cnt++;
-					}
-				}
-			}
-		}
-		for(int i=1;i<MUT_NUM;i++)
-		{
-			if(mut_score[i]>=mut_cnt[i]&&mut_score[i]>1)//define the validity of mutator
-			{
-				perfect_mut[perfect_mut_cnt]=i;
-				perfect_mut_cnt++;
-			}
-			if(mut_score[i]>0){
-				valid_mut[valid_mut_cnt]=i;//mut code
-				sum+=mut_score[i];
-				bound_values[valid_mut_cnt]=sum;//bounds which refer to index possibility in x axis
-				valid_mut_cnt++;
-			}
-		}
-	}
-    int rand=UR(100);
-    if (mut_prior_mode==1 && valid_mut_cnt>0 && rand<VALUE_CHANGE_STRATEGY_BOUND){//75%
-    	if(perfect_mut_cnt>0){
-    		arg[0]=perfect_mut[UR(perfect_mut_cnt)];
-    	}else{
-			int index=binary_search(bound_values,valid_mut_cnt,UR(sum));
-			//OKF("Index:%d,valid_mut_cnt=%d",index,valid_mut_cnt);
-			arg[0]=valid_mut[index];
-			//arg[0]=valid_mut[UR(valid_mut_cnt)];
-    	}
-
-		if(rand<60 && valid_pos_cnt>0){
-			int index=binary_search(bound_values3,valid_pos_cnt,UR(sum3));
-			arg[1]=valid_pos[index];
-			//arg[1]=valid_pos[UR(valid_pos_cnt)];
-			switch (arg[0]){
-			case 0:
-				arg[1]=(arg[1]<<3)+UR(8);
-				break;
-			default:
-				;
-			}
-			/*if(rand>40){
-				arg[1]=arg[1]==MAX_MUT_POS-1?arg[1]:arg[1]+1;
-			}else if(rand>40){
-				arg[1]=arg[1]==0?0:arg[1]-1;
-			}*/
-		}else{
-			arg[1]=-1;
-		}/*
-		if(1<=arg[0] && arg[0]<4){
-			arg[0]=rand%4;
-		}else if(4<=arg[0] && arg[0]<10){
-			arg[0]=4+rand%6;
-		}else if(15==arg[0]||16==arg[0]){
-			arg[0]=15+rand%2;
-		}*/
-		monitor_mut++;
-    }/*else if (cycles_wo_finds >=threshold_cycles_wo_finds && rand<RANDOM_BOUND){//10%
-		int valid_mut_cnt=0;
-		int sum_scaled=0;
-		for(int i=0;i<MUT_NUM;i++)
-		{
-			if(mut_score[i]>0){
-				valid_mut[valid_mut_cnt]=i;
-				sum_scaled+=(int)(mut_score[i]*100);
-				bound_values[valid_mut_cnt]=sum_scaled;
-				valid_mut_cnt++;
-			}
-		}
-		if (sum_scaled==0){
-			arg[0]=UR(range);
-		}else{
-			int index=binary_search(bound_values,valid_mut_cnt,UR(sum_scaled));
-			arg[0]=valid_mut[index];
-		}
-		arg[1]=-1;
-	}*/else{//15%
-		arg[0]=UR(range);
-		arg[1]=-1;
-		random_mut++;
-	}
-
-}
 //static int all_pos_touched=0;
 //static int all_full=0;
 
@@ -10244,8 +9954,8 @@ int main(int argc, char** argv) {
         break;
       /* add by yangke start */
       case 'E': /* Input Directory for Static Control Flow Graph info */
-    	if(!strcmp(optarg, "")) FATAL("Please specify the directory for CFG. e.g -E <cfg_directory>");
-    	cfg_directory=optarg;
+    	if(!strcmp(optarg, "")) FATAL("Please specify the directory for CFG. e.g -E <temp_dir>");
+    	temp_dir=optarg;
         break;
       /* add by yangke end */
       default:
@@ -10450,7 +10160,7 @@ stop_fuzzing:
   fclose(plot_file);
   destroy_queue();
   destroy_extras();
-  destroy_vertex_index();
+  destroy_all_cfg();
   destroy_records();
   ck_free(target_path);
   ck_free(sync_id);
