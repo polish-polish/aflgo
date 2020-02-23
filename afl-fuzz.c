@@ -1113,6 +1113,17 @@ static inline u8 has_new_bits(u8* virgin_map) {
 }
 /* add by yangke start */
 
+/* log to out_dir */
+static inline void log2file_and_free(char * fn,char *info)
+{
+	int debug_fd = open(fn, O_WRONLY | O_CREAT | O_APPEND, 0600);
+	if (debug_fd < 0) PFATAL("Unable to create '%s'", fn);
+	ck_write(debug_fd, info, strlen(info), fn);
+	close(debug_fd);
+	ck_free(info);
+	ck_free(fn);
+}
+
 /* Check if the current execution path brings any change for the map of margin key
  * branch variable values in every execution point.
  * Update virgin_var_bits to reflect the finds. Returns 1 for finding the change, and 0 otherwise.
@@ -3517,7 +3528,7 @@ static CFG * loadFuncCFG(char * fname) {
 		char * second=strtok(NULL,",");
 		int last=strlen(second)-1;
 		second[last]=second[last]=='\n'?'\0':second[last];//strip the '\n'
-		void **p= map_get(cfg->rid2node,first);
+		void **p = map_get(cfg->rid2node,first);
 		if(!p){
 			FATAL("Cannot find rid:%s in rid2node.", first);
 		}
@@ -3628,15 +3639,28 @@ static void update_margin_bbs()
 			map_iter_t succ_iter = map_iter(node->successors);
 			while ((end_str = map_next(node->successors, &succ_iter))) {
 				int end=atoi(end_str);
-				if (virgin_bits[(start>>1)^end]!=0xff)
+				if (trace_bits[(start>>1)^end]!=0xff)
 				{
-					map_set(node->successors,end_str,1);
-					node->cov=1;
-					if(!map_get(rid2node, end_str)){
-						FATAL("Wierd,end_str=%s,fname=%s",end_str,cfg->fname);
-					}
-					((Node *)*map_get(rid2node, end_str))->cov=1;
+					if(trace_bits[(start>>1)^end] >(u8)(*map_get(node->successors,end_str))){
+						//OKF("%d=>%d  ",(u8)*map_get(node->successors,end_str),trace_bits[(start>>1)^end]);
+						map_set(node->successors,end_str,trace_bits[(start>>1)^end]);
+						node->cov=1;
+						if(!map_get(rid2node, end_str)){
+							FATAL("Wierd,end_str=%s,fname=%s",end_str,cfg->fname);
+						}
+						((Node *)*map_get(rid2node, end_str))->cov=1;
 
+//						//DEBUG CODE
+//						OKF("=>%d  ",trace_bits[(start>>1)^end]);
+//						char *cmd=alloc_printf("sed -i \"s/%d->%d.*/%d->%d[label=%u,color=Red];/g\" %s/index/%s.out_edge_index.dot\n",start,end,start,end,trace_bits[(start>>1)^end],temp_dir,fname);
+//						system(cmd);
+//						char * log_file_name=alloc_printf("%s/tem.txt", out_dir);
+//						log2file_and_free(log_file_name,cmd);
+//						char *cmd2=alloc_printf("dot -Tsvg %s/index/%s.out_edge_index.dot -o %s/index/%s.out_edge_index.svg",temp_dir,fname,temp_dir,fname);
+//						system(cmd2);
+//						ck_free(cmd2);
+//						//ck_free(cmd);
+					}
 				}
 			}
 		}
@@ -3652,7 +3676,6 @@ static void update_margin_bbs()
 		Container * pmbbs = cfg->pmbbs;
 		for(int j=0;j<pmbbs->cur_size;j++){
 			Node * node = (Node*)pmbbs->elements[j];
-			int start=node->rid;
 			if(node->cov==1){
 				node->is_margin=0;
 				map_iter_t succ_iter = map_iter(node->successors);
@@ -3662,8 +3685,7 @@ static void update_margin_bbs()
 					//Margin BB condition:
 					//BB_start(cov:1)-[cov:0]->BB_end(distance>0)
 					int cov=*map_get(node->successors,end_str);
-					//if (virgin_bits[(start>>1)^end]==0xff && ((Node*)*map_get(rid2node,end_str))->distance>0.0)
-					if (!cov && ((Node*)*map_get(rid2node,end_str))->distance>0.0)
+					if (!cov && ((Node*)*map_get(rid2node,end_str))->distance>-0.0001)
 					{
 						add_element(cfg->margin_bbs,node);
 						if(node->margin_history==0){
@@ -3679,22 +3701,22 @@ static void update_margin_bbs()
 								strcpy(target_function,fname);
 							}
 
-							//DEBUG CODE
-							u8 *fn = alloc_printf("%s/index/%s.out_edge_index.dot",temp_dir,fname);
-							FILE * f;
-							if (!(f = fopen(fn, "r+"))) {
-								ck_free(fn);
-								return;
-							}
-							fseek(f,-2L,SEEK_END);
-							u8* node_str=alloc_printf("\n%d [label=\"%d\",color=Red ,shape=record];\n}",start,start);
-							fputs(node_str,f);
-							fclose(f);
-							ck_free(node_str);
-							ck_free(fn);
-							char *cmd=alloc_printf("dot -Tsvg %s/index/%s.out_edge_index.dot -o %s/index/%s.out_edge_index.svg",temp_dir,fname,temp_dir,fname);
-							system(cmd);
-							ck_free(cmd);
+//							//DEBUG CODE
+//							u8 *fn = alloc_printf("%s/index/%s.out_edge_index.dot",temp_dir,fname);
+//							FILE * f;
+//							if (!(f = fopen(fn, "r+"))) {
+//								ck_free(fn);
+//								return;
+//							}
+//							fseek(f,-2L,SEEK_END);
+//							u8* node_str=alloc_printf("\n%d [label=\"%d\",color=Blue ,shape=record];\n}",start,start);
+//							fputs(node_str,f);
+//							fclose(f);
+//							ck_free(node_str);
+//							ck_free(fn);
+//							char *cmd=alloc_printf("dot -Tsvg %s/index/%s.out_edge_index.dot -o %s/index/%s.out_edge_index.svg",temp_dir,fname,temp_dir,fname);
+//							system(cmd);
+//							ck_free(cmd);
 						}else{
 							//margin still not solved
 						}
@@ -3765,37 +3787,7 @@ static inline char * get_description(int mut_code)
 			  return "UNKNOWN MUTATION CODE:";
 	}
 }
-static inline void print_mutation_table2(int index)
-{
-	u8 * log_file_name=alloc_printf("%s/perfect_mut_log.txt", out_dir);
-	int debug_fd = open(log_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
-	OKF("#####INTERESTING MUTATION TABLE#####");
-	ck_write(debug_fd, "#####INTERESTING MUTATION TABLE#####\n", strlen("#####INTERESTING MUTATION TABLE#####\n"), log_file_name);
-	for(int i=0;i<MUT_NUM;i++)
-	{
-		if(mut_cnt[i]>0){
-			char pos_list_str[MAX_MUT_POS/4]={0};//1024
-			char *ptr=pos_list_str;
-			for(int j=0;j<MAX_MUT_POS;j++)
-			{
-				if(mut[i][j]>0){
-					int len=sprintf(ptr,"%d,",j);
-					ptr+=len;
-					if(ptr-pos_list_str>=MAX_MUT_POS/4){
-						FATAL("Buffer Overflow! in print_mutation_table()");
-					}//OKF("%d[%d],%d/%d/%d,%s",i,j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt,get_description(i));
-				}
-			}
-			OKF("##%02d,%02d|%02d|%s%s",i,mut_score[i],mut_cnt[i],pos_list_str,get_description(i));
-			u8 * info=alloc_printf("##%02d,%02d|%02d|%s%s\n",i,mut_score[i],mut_cnt[i],pos_list_str,get_description(i));
-			if (debug_fd < 0) PFATAL("Unable to create '%s'", log_file_name);
-			ck_write(debug_fd, info, strlen(info), log_file_name);
-			ck_free(info);
-		}
-	}
-	close(debug_fd);
-	ck_free(log_file_name);
-}
+
 static inline void print_mutation_table(int index)
 {
 	u8 * log_file_name=alloc_printf("%s/valid_mut_log.txt", out_dir);
@@ -3826,55 +3818,9 @@ static inline void print_mutation_table(int index)
 	}
 	close(debug_fd);
 	ck_free(log_file_name);
-}/*
-static inline void print_mutation_table_bak(int index)
-{
-	if(index==-1){
-		for(int i=0;i<margin_bb_count;i++){
-			int index=rid2index[margin_bb_rid[i]];
-			OKF("####INTERESTING MUTATION TABLE {margin(%d),rid=%d}####",index,margin_bb_rid[i]);
-			for(struct mutation *m=vertex_index[index].mut_list;m!=NULL;m=m->next)
-			{
-				char pos_list_str[MAX_MUT_POS/4]={0};//1024
-				char *ptr=pos_list_str;
-				for(struct position * p=m->pos_list;p!=NULL;p=p->next)
-				{
-					int len=sprintf(ptr,"%d,",p->pos);
-					if(len<=0){
-						FATAL("sprintf FAILED! in print_mutation_table()");
-					}
-					ptr+=len;
-					if(ptr-pos_list_str>=MAX_MUT_POS/4){
-						FATAL("Buffer Overflow! in print_mutation_table()");
-					}
-				}
-				OKF("##%02d,%02d|%02d|%s%s",m->code,mut_score[m->code],m->cnt,pos_list_str,get_description(m->code));
-			}
-		}
-	}else{
-		OKF("####INTERESTING MUTATION TABLE {margin(%d),rid=%d}####",index,vertex_index[index].rid);
-		for(struct mutation *m=vertex_index[index].mut_list;m!=NULL;m=m->next)
-		{
-			char pos_list_str[MAX_MUT_POS/4]={0};//1024
-			char *ptr=pos_list_str;
-			for(struct position * p=m->pos_list;p!=NULL;p=p->next)
-			{
-				int len=sprintf(ptr,"%d,",p->pos);
-				if(len<=0){
-					FATAL("sprintf FAILED! in print_mutation_table()");
-				}
-				ptr+=len;
-				if(ptr-pos_list_str>=MAX_MUT_POS/4){
-					FATAL("Buffer Overflow! in print_mutation_table()");
-				}
-			}
-			OKF("##%02d,%d|%d|%s%s",m->code,mut_score[m->code],m->cnt,pos_list_str,get_description(m->code));
-		}
-	}
-}*/
+}
 /* add by yangke start */
 static inline void record_value_changing_mutation(Node* node_list[],int size);
-static inline void record_value_changing_mutation2(int index,int weight);
 //static inline void add_to_invlaid_positions(int index);
 static inline void cleanup_value_changing_mutation_record();
 static int branch_attack_mode=0;
@@ -3902,9 +3848,10 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
       /* add by yangke start */
 	  if (cycles_wo_finds >=threshold_cycles_wo_finds){
-		  if (!cfg_loaded)
+		  if (!cfg_loaded){
 			  loadCFG();
-		  update_margin_bbs();
+		      update_margin_bbs();
+		  }
 		  Node * node_list[margin_bb_count];
 		  int cnt=has_new_var_bits(virgin_var_bits,node_list);
 		  int rid_list_str_size=margin_bb_count<<6;
@@ -5926,34 +5873,7 @@ static inline void cleanup_value_changing_mutation_record()
 	destroy_records();
 	map_init(&record_map);
 }
-//static inline void cleanup_value_changing_mutation_record()
-//{
-//
-//	total_mut_cnt=0;
-//	total_monitored_mut_cnt=0;
-//
-//	/* TODO:delete start */
-//	for(int i=0;i<MUT_NUM;i++)
-//	{
-//		mut_cnt[i]=0;
-//		for(int j=0;j<MAX_MUT_POS;j++)
-//		{
-//			mut[i][j]=0;
-//		}
-//	}
-//	/* TODO:delete end */
-//
-//	for(int i=0;i<vertex_num;i++)
-//	{
-//		if(vertex_index[i].is_margin)
-//		{
-//			for(struct mutation *m=vertex_index[i].mut_list;m!=NULL;m=m->next)
-//			{
-//				delete_all_mutation(i);
-//			}
-//		}
-//	}
-//}
+
 static inline void cleanup_possible_value_changing_mutation_record()
 {
 	for(int i=0;i<MUT_NUM;i++)
@@ -6029,53 +5949,6 @@ static inline void add_to_invlaid_positions(int index)
 	}
 }
 */
-static inline void record_value_changing_mutation2(int index,int quality)
-{
-	//quality=1 :margin branch var changed
-	//quality=2 :new path
-	for(int i=0;i<MUT_NUM;i++)
-	{
-		if(tmp_mut_cnt[i]>0)
-		{
-			mut_cnt[i]+=tmp_mut_cnt[i];
-			/*struct mutation * m=malloc(sizeof(struct mutation));
-			m->code=i;
-			m->cnt=tmp_mut_cnt[i]*quality;//OKF("add tmp_mut_cnt %d",tmp_mut_cnt[i]);
-			m->pos_list=NULL;
-			m->next=NULL;*/
-			char pos_list_str[MAX_MUT_POS/16]={0};//256 ///TODO:delete
-			char *ptr=pos_list_str;///TODO:delete
-			for(int j=0;j<MAX_MUT_POS;j++)
-			{
-				if(tmp_mut[i][j]>0)
-				{
-					/* TODO:delete start */
-					mut[i][j]+=tmp_mut[i][j];
-					int len=sprintf(ptr,"%d,",j);
-					if(len>0){
-						ptr+=len;
-						if(ptr-pos_list_str==MAX_MUT_POS/4){
-							FATAL("Buffer Overflow! in record_value_changing_mutation()");
-						}
-					}else{
-						FATAL("sprintf FAILED! in record_value_changing_mutation()");
-					}
-					/* TODO:delete end */
-					///add_position(m,j,tmp_mut[i][j]*quality);
-				}
-			}
-			///add_mutation(index,m);
-			total_monitored_mut_cnt+=tmp_mut_cnt[i];
-		}
-	}
-	if(!target_bb||target_bb->rid==38124)
-	{
-		  //WARNF("DEBUG for libturbojpeg jdmarker:659 FIND MUT THAT AFFECT TARGET BB!");
-		  WARNF("DEBUG for maze.c:106!");
-		  print_mutation_table(index);
-	}
-}
-
 static int chcnt=0;
 static void check_record(char * mark)//all values in record_map must be records in record_list
 {
