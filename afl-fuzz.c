@@ -376,6 +376,7 @@ typedef struct record{
 	struct record * next;
 } Record;
 
+
 typedef struct {
 	int cur_size;
 	int max_size;
@@ -400,7 +401,6 @@ static double max_gd=0.0;//max distance of strong connected margin basic block g
 static Record * record_list=NULL;
 static map_void_t record_map;
 static int record_map_initialized=0;
-static map_void_t fname2cfg;
 static int cfg_loaded=0;
 static int vertex_num=0;
 static int edge_num=0;
@@ -1138,8 +1138,8 @@ static inline void log2file_and_free(char * fn,char *info)
 	//OKF("margin_bb_count=%d",margin_bb_count);
 	for (int i=0;i<CFGs->cur_size;i++) {
 		CFG * cfg=(CFG *)CFGs->elements[i];
-		if(!cfg->rid2node) FATAL("fname2cfg is broken, fname=%p,rid2node=(nil)",cfg->fname);
-		if(!cfg->margin_bbs) FATAL("fname=%p Margin BB not initialized! cfg->margin_bbs=(nil)",cfg->fname);
+		if(!cfg->rid2node) FATAL("CFG of %s() is empty! rid2node=(nil)",cfg->fname);
+		if(!cfg->margin_bbs) FATAL("Margin BB of %s() not initialized! cfg->margin_bbs=(nil)",cfg->fname);
 		Container * margin_bbs = cfg->margin_bbs;
 		for(int j=0;j<margin_bbs->cur_size;j++){
 			Node * node = (Node*)margin_bbs->elements[j];
@@ -1160,7 +1160,7 @@ static inline void log2file_and_free(char * fn,char *info)
 
 	    for (int i=0;i<CFGs->cur_size;i++) {
 			CFG * cfg=(CFG *)CFGs->elements[i];
-			if(!cfg->rid2node) FATAL("fname2cfg is broken, fname=%p,rid2node=(nil)",cfg->fname);
+			if(!cfg->rid2node) FATAL("CFG of %s() is empty! rid2node=(nil)",cfg->fname);
 			Container * margin_bbs = cfg->margin_bbs;
 			for(int j=0;j<margin_bbs->cur_size;j++){
 				Node * node = (Node*)margin_bbs->elements[j];
@@ -3411,7 +3411,7 @@ void destroy_all_cfg()
 {
 	for (int i=0;i<CFGs->cur_size;i++) {
 	    CFG * cfg=(CFG *)CFGs->elements[i];
-	    if(!cfg->rid2node) FATAL("fname2cfg is broken, fname=%p,rid2node=(nil)",cfg->fname);
+	    if(!cfg->rid2node) FATAL("CFG of %s() is empty! rid2node=(nil)",cfg->fname);
 	    map_void_t * rid2node = cfg->rid2node;
 	    const char *rid_str;
 	    map_iter_t node_iter = map_iter(rid2node);
@@ -3600,7 +3600,6 @@ static void loadCFG()
 		init_container(CFGs);
 	}
 	char line[MAX_LINE];
-	map_init(&fname2cfg);
 	while (fgets(line, MAX_LINE, f)) {
 		char * fname=strtok(line,",");
 		CFG * cfg = loadFuncCFG(fname);
@@ -3625,7 +3624,7 @@ static void update_margin_bbs()
 		/*1. update coverage information and clean margin*/
 		CFG * cfg=(CFG *)CFGs->elements[i];
 		char *fname = cfg->fname;
-		if(!cfg->rid2node) FATAL("fname2cfg is broken, fname=%p,rid2node=(nil)",fname);
+		if(!cfg->rid2node) FATAL("CFG of %s() is empty. rid2node=(nil)",fname);
 		map_void_t *rid2node = cfg->rid2node;
 		const char *rid_str;
 		map_iter_t node_iter = map_iter(&rid2node);
