@@ -89,7 +89,6 @@ if [ "$2" != "-" ] ; then
 		#valid answer e.g. "ssssddddwwaawwddddssssddwwww" "ssssddddwwaawwddddsddwwdwww" "sddwddddsddwdw" "ssssddddwwaawwddddsddwdw"
 	fi
 	rm -rf $DIR_OUT
-	
         
 fi
 

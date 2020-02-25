@@ -277,6 +277,7 @@ struct queue_entry {
   u32 tc_ref;                         /* Trace bytes ref count            */
 
   double distance;                    /* Distance to targets              */
+  u32 exec_path_len;                  /* Exec trace length from bitmap    */
 
   struct queue_entry *next,           /* Next element, if any             */
                      *next_100;       /* 100 elements ahead               */
@@ -321,7 +322,6 @@ static s32 interesting_32[] = { INTERESTING_8, INTERESTING_16, INTERESTING_32 };
 
 #define MAX_MUT_POS (1024) //4KB
 #define MUT_NUM 17
-static int mut[MUT_NUM][MAX_MUT_POS];//e.g. mut[0][2] mut times of BIT_FLIP(opcode is 0,see afl-fuzz.c:6566) at byte with offset 2 of the input
 static int mut_cnt[MUT_NUM];//mutation times of a each kind of mution (for value effective filtration).
 static map_int_t tmp_pos_map[MUT_NUM];
 static u8 tmp_pos_map_initialized=0;
@@ -352,6 +352,10 @@ static unsigned threshold_cycles_wo_finds=INIT_THRESHOLD_CYCLES_WO_FINDS;
 static unsigned max_mut_loop_bound=INIT_MUT_LOOP_BOUND;
 static int mut_prior_mode=0;//flags that indicate we are in mutation prior mode
 //TODO: add more mutator argument info other than position ...
+static u32 max_trace_len=0;
+static u32 cur_trace_len=0;
+static double avg_hit_cnt=0.0;
+static u32 trace_classes=0;
 
 typedef struct BasicBlock{
 	int rid;
@@ -377,6 +381,14 @@ typedef struct record{
 	struct record * next;
 } Record;
 
+typedef struct strategy{
+	Record * record_list;
+	map_void_t record_map;
+	u32 trace_len;
+	u32 hit_cnt;
+	u8 need_start_compaign;
+} Strategy;
+
 typedef struct {
 	int cur_size;
 	int max_size;
@@ -397,17 +409,18 @@ static double min_d=1.7E+308;//min distance of margin basic block, initialize in
 static double min_gd=1.7E+308;//min distance of strong connected margin basic block group, initialize in record_value_changing_mutation().
 static double max_gd=0.0;//max distance of strong connected margin basic block group, initialize in record_value_changing_mutation().
 
-static Record * record_list=NULL;
-static map_void_t record_map;
-static int record_map_initialized=0;
+static map_void_t trace2strategy;
 static int cfg_loaded=0;
 static int vertex_num=0;
 static int edge_num=0;
 static Node * target_bb=NULL;
 static char target_function[64]={'\0'};
-static int need_start_compaign=0;
 
-
+static u32 trace_len(u8* mem);
+static inline void record_value_changing_mutation(Node * node_list[],int size);
+//static inline void add_to_invlaid_positions(int index);
+static inline void cleanup_value_changing_mutation_record();
+static int branch_attack_mode=0;
 /* add by yangke end */
 
 /* Fuzzing stages */
@@ -913,6 +926,10 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
   q->passed_det   = passed_det;
 
   q->distance = cur_distance;
+  q->exec_path_len = cur_trace_len;
+  if(cur_trace_len>max_trace_len) {
+	  max_trace_len= cur_trace_len;
+  }
   if (cur_distance > 0) {
 
     if (max_distance <= 0) {
@@ -1034,6 +1051,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
     cur_distance = (double) (*total_distance) / (double) (*total_count);
   else
     cur_distance = -1.0;
+  cur_trace_len=trace_len(trace_bits);
 
 #else
 
@@ -1265,6 +1283,20 @@ static u32 count_non_255_bytes(u8* mem) {
 
 }
 
+/* add by yangke start */
+static u32 trace_len(u8* mem) {
+
+	u8* ptr = mem;
+	u32  ret = 0;
+	for(u32 i=0;i<MAP_SIZE;i++,ptr++){
+		if (((*ptr)&0xff)&&(*ptr)!=0xff){
+			ret+=*ptr;//TODO: fix integer overflow
+		}
+	}
+	return ret;
+
+}
+/* add by yangke end */
 
 /* Destructively simplify trace by eliminating hit count information
    and replacing it with 0x80 or 0x01 depending on whether the tuple
@@ -3374,21 +3406,31 @@ static void write_crash_readme(void) {
   fclose(f);
 
 }
-
-void destroy_records()
+void destroy_template_strategy(Strategy *s)
 {
-	map_deinit(&record_map);
+	map_deinit(&s->record_map);
 	Record *r;
-	while(record_list!=NULL){
-		r=record_list;
-		record_list=r->next;
+	while(s->record_list!=NULL){
+		r=s->record_list;
+		s->record_list=r->next;
 		hashset_destroy(r->B);
 		map_deinit(&r->P);
 		free(r);
 	}
+	free(s);
+}
+void destroy_records()
+{
+	const char *key;
+	map_iter_t iter = map_iter(&trace2strategy);
+	while ((key = map_next(&trace2strategy, &iter))) {
+	  Strategy * s=(Strategy *) *map_get(&trace2strategy, key);
+	  destroy_template_strategy(s);
+	}
 	for(int i=0;i<MUT_NUM;i++){
 		map_deinit(&tmp_pos_map[i]);
 	}
+	map_deinit(&trace2strategy);
 	value_changing_mutation_record_initialized=0;
 	tmp_pos_map_initialized=0;
 }
@@ -3699,7 +3741,21 @@ static void update_margin_bbs()
 									//FATAL("ttgload.c:2712:12 distance=%f",node->distance);
 								}
 								min_d=node->distance;
-								need_start_compaign=1;
+								char key[32];
+								sprintf(key,"%d",queue_cur->exec_path_len);
+								void **p=map_get(&trace2strategy, key);
+								Strategy *s;
+								if(!p){
+								   s=(Strategy *)malloc(sizeof(Strategy));
+								   s->record_list=NULL;
+								   s->trace_len=queue_cur->exec_path_len;
+								   s->hit_cnt=0;
+								   s->need_start_compaign=1;
+								   map_init(&s->record_map);
+								   map_set(&trace2strategy, key, s);
+								}else{
+									((Strategy *)*p)->need_start_compaign=1;
+								}
 								target_bb=node;
 								strcpy(target_function,fname);
 							}
@@ -3791,43 +3847,96 @@ static inline char * get_description(int mut_code)
 	}
 }
 
-static inline void print_mutation_table(int index)
+static inline void print_mutation_table()
 {
 	u8 * log_file_name=alloc_printf("%s/valid_mut_log.txt", out_dir);
 	int debug_fd = open(log_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
 	OKF("#####INTERESTING MUTATION TABLE#####");
 	ck_write(debug_fd, "#####INTERESTING MUTATION TABLE#####\n", strlen("#####INTERESTING MUTATION TABLE#####\n"), log_file_name);
-	for(int i=0;i<MUT_NUM;i++)
-	{
-		if(mut_cnt[i]>0){
-			char pos_list_str[MAX_MUT_POS/4]={0};//1024
-			char *ptr=pos_list_str;
-			for(int j=0;j<MAX_MUT_POS;j++)
+	const char * trace_len_str;
+
+	map_iter_t iter0 = map_iter(&trace2strategy);
+
+	while ((trace_len_str = map_next(&trace2strategy, &iter0))) {
+
+		char * len_info=alloc_printf("len=%s\n",trace_len_str);
+		ck_write(debug_fd,len_info,strlen(len_info),log_file_name);
+		ck_free(len_info);
+		Strategy* s=(Strategy *)*map_get(&trace2strategy, trace_len_str);
+		for(Record * r=s->record_list;r;r=r->next){
+			char rid_list_str[512];
+			char *ptr=rid_list_str;
+			for(hashset_itr_t iter = hashset_iterator(r->B);hashset_iterator_has_next(iter);hashset_iterator_next(iter))
 			{
-				if(mut[i][j]>0){
-					int len=sprintf(ptr,"%d,",j);
-					ptr+=len;
-					if(ptr-pos_list_str>=MAX_MUT_POS/4){
-						FATAL("Buffer Overflow! in print_mutation_table()");
-					}//OKF("%d[%d],%d/%d/%d,%s",i,j,mut[i][j],total_monitored_mut_cnt,total_mut_cnt,get_description(i));
+				Node *node =(Node *)hashset_iterator_value(iter);
+				ptr+=sprintf(ptr,"%d,",node->rid);
+			}
+
+			char pos_list_str[512];
+			ptr=pos_list_str;
+			const char * pos_str;
+			map_iter_t iter2 = map_iter(&r->P);
+			while ((pos_str = map_next(&r->P, &iter2))) {
+				ptr+=sprintf(ptr,"%s,",pos_str);
+			}
+			char * line =alloc_printf("rid group=%s,pos:%s\n",rid_list_str,pos_list_str);
+			ck_write(debug_fd,line,strlen(line),log_file_name);
+			ck_free(line);
+
+			for(int i=0;i<MUT_NUM;i++)
+			{
+				if(r->M[i])
+				{
+					char mut_line[256];
+					sprintf(mut_line,"%d,%s\n",i,get_description(i));
+					ck_write(debug_fd,mut_line,strlen(mut_line),log_file_name);
 				}
 			}
-			OKF("##%02d,%02d|%02d|%s%s",i,mut_score[i],mut_cnt[i],pos_list_str,get_description(i));
-			u8 * info=alloc_printf("##%02d,%02d|%02d|%s%s\n",i,mut_score[i],mut_cnt[i],pos_list_str,get_description(i));
-			if (debug_fd < 0) PFATAL("Unable to create '%s'", log_file_name);
-			ck_write(debug_fd, info, strlen(info), log_file_name);
-			ck_free(info);
 		}
+		ck_write(debug_fd,"------------------\n",strlen("------------------\n"),log_file_name);
 	}
 	close(debug_fd);
 	ck_free(log_file_name);
 }
 /* add by yangke start */
-static inline void record_value_changing_mutation(Node* node_list[],int size);
-//static inline void add_to_invlaid_positions(int index);
-static inline void cleanup_value_changing_mutation_record();
-static int branch_attack_mode=0;
+static inline u8 update_hit_cnt()
+{
+	u8 ret=1;
+	char key[32];
+	sprintf(key,"%d",cur_trace_len);
+	void **p=map_get(&trace2strategy, key);
+	Strategy *s;
+	if(!p){
+	  /* create strategy */
+	  s=(Strategy *)malloc(sizeof(Strategy));
+	  s->record_list=NULL;
+	  s->trace_len=cur_trace_len;
+	  s->hit_cnt=0;
+	  s->need_start_compaign=1;
+	  map_init(&s->record_map);
+	  map_set(&trace2strategy, key, s);
+	  /* calculate the average hit_cnt */
+	  OKF("INSERT TO:trace_len_map max_trace_len:%d,cur_trace_len:%d",max_trace_len,cur_trace_len);
+	  if(trace_classes==0){
+		  avg_hit_cnt=0.0;
+	  }
+	  avg_hit_cnt=avg_hit_cnt*(trace_classes/(trace_classes+1.0))+1.0/(trace_classes+1.0);
 
+	  //print_mutation_table();
+	  trace_classes++;
+	  ret=0;
+	}else{
+	  s=(Strategy *)*p;
+	  s->hit_cnt++;
+	  avg_hit_cnt=avg_hit_cnt+1.0/trace_classes;
+
+	}
+	OKF("avg_fuzz_cnt=%f,trace_cnt=%u",avg_hit_cnt,trace_classes);
+	char * log_file_name=alloc_printf("%s/trace_len.txt", out_dir);
+	char * info=alloc_printf("%s:%d\n",key,((Strategy *)*map_get(&trace2strategy,key))->hit_cnt);
+	log2file_and_free(log_file_name,info);
+	return ret;
+}
 /* add by yangke end */
 
 /* Check if the result of an execve() during routine fuzzing is interesting,
@@ -3872,8 +3981,26 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 			  if(!mut_prior_mode){
 				  mut_prior_mode=1;//OKF("Switch to mut_prior_mode!");
 			  }
-			  WARNF("%d affected branch:%s\n",cnt,rid_list_str);
-			  record_value_changing_mutation(node_list,cnt);
+			  /* logging */
+			  u8 * log_file_name=alloc_printf("%s/value_affected_branch.txt", out_dir);
+			  u8 * info=alloc_printf("len=%d,affected %d branch:%s,margin_bb_count:%d,%s\n",cur_trace_len,cnt,rid_list_str,margin_bb_count,(char *)mem);
+			  log2file_and_free(log_file_name,info);
+
+			  if(!branch_attack_mode && target_bb && target_bb->state_based){
+
+				  /* record mutations that affects deepest state*/
+				  if(cur_trace_len>=queue_cur->exec_path_len)
+				  {
+					  record_value_changing_mutation(node_list,cnt);
+				  }
+
+			  }else{
+				  /* record mutations that affects condition forks not completely covered */
+				  record_value_changing_mutation(node_list,cnt);
+			  }
+			  //int ret0 = update_hit_cnt();
+			  //if(ret0)
+				//  return 0;
 		  }else{
 			  if (!branch_attack_mode && target_bb!=NULL && !target_bb->state_based &&  cycles_wo_finds >=len*10){
 
@@ -3898,12 +4025,24 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     else{//new coverage findings
     	////examin mutations that contribute to this new coverage
     	if (cycles_wo_finds >=threshold_cycles_wo_finds){
-    		for(int i=0;i<MUT_NUM;i++)
-			{
-				if(one_fuzz_mut_cnt[i]>0){
-					mut_score[i]+=1;//one_fuzz_mut_cnt[i];
+    		if(!branch_attack_mode && target_bb && target_bb->state_based){
+				if(cur_trace_len>=queue_cur->exec_path_len){
+					for(int i=0;i<MUT_NUM;i++)
+					{
+						if(one_fuzz_mut_cnt[i]>0){
+							mut_score[i]+=1;//one_fuzz_mut_cnt[i];
+						}
+						//OKF("%02d,%d|%d|[%d]%s",i,mut_score[i],mut_cnt[i],tmp_mut_cnt[i],get_description(i));
+					}
 				}
-				//OKF("%02d,%d|%d|[%d]%s",i,mut_score[i],mut_cnt[i],tmp_mut_cnt[i],get_description(i));
+			}else{
+				for(int i=0;i<MUT_NUM;i++)
+				{
+					if(one_fuzz_mut_cnt[i]>0){
+						mut_score[i]+=1;//one_fuzz_mut_cnt[i];
+					}
+					//OKF("%02d,%d|%d|[%d]%s",i,mut_score[i],mut_cnt[i],tmp_mut_cnt[i],get_description(i));
+				}
 			}
     		int randwin=0;
 			if(mut_prior_mode){
@@ -3931,7 +4070,28 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
 			if (!cfg_loaded)
 				loadCFG();
-			  update_margin_bbs();
+			update_margin_bbs();
+			if(!branch_attack_mode && target_bb && target_bb->state_based){
+
+				Strategy * s;
+				if(cur_trace_len > queue_cur->exec_path_len ){
+					char key[32];
+					sprintf(key,"%d",cur_trace_len);
+					void **p= map_get(&trace2strategy,key);
+					if(!p){
+						s=(Strategy *)malloc(sizeof(Strategy));
+						s->record_list=NULL;
+						s->trace_len=cur_trace_len;
+						s->hit_cnt=0;
+						s->need_start_compaign=1;
+						map_init(&s->record_map);
+						map_set(&trace2strategy, key, s);
+					}
+					/*if(cur_trace_len > max_trace_len){
+						cleanup_scc_indicator_value();
+					}*/
+				}
+			}
 /*
 			  int ridlist[margin_bb_count];
 			  int cnt=has_new_var_bits(virgin_var_bits,ridlist);
@@ -3964,10 +4124,10 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
 			//t1=t2=t3=0;
 			//cleanup_value_changing_mutation_record();
-			if (!branch_attack_mode && target_bb && target_bb->state_based){
+			/*if (!branch_attack_mode && target_bb && target_bb->state_based){
 				cleanup_value_changing_mutation_record();
 				WARNF("clean UP!");
-			}
+			}*/
 			/*
     		if (!cfg_loaded)
     			loadCFG();
@@ -4148,8 +4308,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 	  destroy_records();
 	  ck_free(target_path);
 	  ck_free(sync_id);
-
-		alloc_report();
+      alloc_report();
       exit(0);
       /* add by yangke end */
 
@@ -5867,7 +6026,7 @@ static inline void init_value_changing_mutation_record()
 	{
 		mut_cnt[i]=0;
 	}
-	map_init(&record_map);
+	map_init(&trace2strategy);
 }
 static inline void init_mutation_score()
 {
@@ -5878,16 +6037,19 @@ static inline void init_mutation_score()
 }
 static inline void cleanup_value_changing_mutation_record()
 {
-	map_deinit(&record_map);
-	Record *r;
-	while(record_list!=NULL){
-		r=record_list;
-		record_list=r->next;
-		hashset_destroy(r->B);
-		map_deinit(&r->P);
-		free(r);
+	const char *key;
+	map_iter_t iter = map_iter(&trace2strategy);
+	while ((key = map_next(&trace2strategy, &iter))) {
+	  Strategy * s=(Strategy *) *map_get(&trace2strategy, key);
+	  destroy_template_strategy(s);
 	}
-	init_value_changing_mutation_record();
+	if(value_changing_mutation_record_initialized)
+		map_deinit(&trace2strategy);
+	map_init(&trace2strategy);
+	for(int i=0;i<MUT_NUM;i++)
+	{
+		mut_cnt[i]=0;
+	}
 }
 
 static inline void cleanup_possible_value_changing_mutation_record()
@@ -5956,7 +6118,7 @@ static inline void add_to_invlaid_positions(int index)
 }
 */
 static int chcnt=0;
-static void check_record(char * mark)//all values in record_map must be records in record_list
+static void check_record(Strategy * s,char * mark)//all values in record_map must be records in record_list
 {
 	return;//currently disabled
 	chcnt++;
@@ -5970,11 +6132,15 @@ static void check_record(char * mark)//all values in record_map must be records 
 
 	const char *key;
 	map_iter_t iter = map_iter(&record_map);
-	while ((key = map_next(&record_map, &iter))) {
-		Record *cur_r=*(Record**)map_get(&record_map, key);
+	while ((key = map_next(&s->record_map, &iter))) {
+		Record *cur_r=*(Record**)map_get(&s->record_map, key);
 
-		//OKF("key=%s,cur_r=%p",key,cur_r);
-		if(!hashset_is_member(cur_r->B,(void *)(size_t)atoi(key)))
+		OKF("key=%s,cur_r=%p",key,cur_r);
+
+		Node * node;
+		sscanf(key, "%p", &node);
+		OKF("Converted key=%p",node);
+		if(!hashset_is_member(cur_r->B,(void *)(node)))
 		{
 			FATAL("A This should not happen!");
 		}
@@ -5985,25 +6151,23 @@ static void check_record(char * mark)//all values in record_map must be records 
 		//int flag=0;
 		for(hashset_itr_t iter = hashset_iterator(cur_r->B);hashset_iterator_has_next(iter);hashset_iterator_next(iter))
 		{
-			int rid = hashset_iterator_value(iter);
+			Node *node =(Node *)hashset_iterator_value(iter);
 			//if(rid==atoi(key)){
 			//	flag=1;
 			//}
-			int len=sprintf(ptr,"%d,",(int)(size_t)rid);
+			ptr+=sprintf(ptr,"%d,",node->rid);
 			//OKF("capacity:%lu",iter->set->capacity);
-			if(len<=0)FATAL("ERROR during sprintf");
-			ptr+=len;
 		}
 //		if(!flag){
 //			FATAL("B This should not happen!");
 //		}
-		info=alloc_printf("%s -> %p,%s\n", key, cur_r,rid_list_str);
-		OKF("%s -> %p,%s", key, cur_r,rid_list_str);
+		info=alloc_printf("%d -> %p,%s\n", ((Node*)node)->rid, cur_r,rid_list_str);
+		OKF("%d -> %p,%s", ((Node*)node)->rid, cur_r,rid_list_str);
 		ck_write(debug_fd, info, strlen(info), log_file_name);
 		ck_free(info);
 
 		Record * it_r;
-		for(it_r=record_list;it_r!=NULL&&it_r!=cur_r;it_r=it_r->next){
+		for(it_r=s->record_list;it_r!=NULL&&it_r!=cur_r;it_r=it_r->next){
 			map_iter_t pos_iter = map_iter(&it_r->P);
 			const char *pos=NULL;
 			int flag=0;
@@ -6012,7 +6176,7 @@ static void check_record(char * mark)//all values in record_map must be records 
 			}
 			if(!flag) FATAL("r->P is empty!");
 		}
-		if(it_r==NULL&&record_list!=NULL)FATAL("(%d) %s Not in record_list %s -> %p",chcnt,info,key,cur_r);
+		if(it_r==NULL&&s->record_list!=NULL)FATAL("(%d) %s Not in record_list %d -> %p",chcnt,info,((Node*)node)->rid,cur_r);
 	}
 	close(debug_fd);
 	ck_free(log_file_name);
@@ -6025,27 +6189,27 @@ static void check_record(char * mark)//all values in record_map must be records 
  * all value in record_map must be in record_list
  * You can use "check_record();" to check the completenese when debugging
  */
-static inline void  merge_record(Record* to, Record* from)
+static inline void  merge_record(Record* to, Record* from,Strategy *s)
 {
-	if(!record_list||!to||!from||to==from){
-		FATAL("EROOR record_list=%p,from=%p,to=%p",record_list,to,from);
+	if(!s->record_list||!to||!from||to==from){
+		FATAL("EROOR record_list=%p,from=%p,to=%p",s->record_list,to,from);
 	}
 //	OKF("before");
 //	for(Record *t=record_list;t!=NULL;t=t->next){
 //		OKF("%p->",t);
 //	}
-	if(record_list!=to)
+	if(s->record_list!=to)
 	{
 		Record* prev;
-		for(prev=record_list;prev!=NULL&&prev->next!=to;prev=prev->next);//SIGSEGV if from not in record_list
+		for(prev=s->record_list;prev!=NULL&&prev->next!=to;prev=prev->next);//SIGSEGV if from not in record_list
 		if(prev==NULL)FATAL("Not in record_list to=%p",from);
 	}
-	if(record_list==from)
+	if(s->record_list==from)
 	{
-		record_list=record_list->next;
+		s->record_list=s->record_list->next;
 	}else{
 		Record* prev;
-		for(prev=record_list;prev!=NULL&&prev->next!=from;prev=prev->next);//SIGSEGV if from not in record_list
+		for(prev=s->record_list;prev!=NULL&&prev->next!=from;prev=prev->next);//SIGSEGV if from not in record_list
 		if(prev==NULL)FATAL("Not in record_list from=%p",from);
 		prev->next=from->next;
 	}
@@ -6063,14 +6227,14 @@ static inline void  merge_record(Record* to, Record* from)
 	//Merge Branches
 	for(hashset_itr_t iter = hashset_iterator(from->B);hashset_iterator_has_next(iter);hashset_iterator_next(iter))
 	{
-		void * rid=(void *)hashset_iterator_value(iter);
-		if(hashset_is_member(to->B,rid)){
-			FATAL("ERROR:The joint of record:%p and record %p contains %d, is not empty!",to,from,(int)(size_t)rid);
+		Node * node=(Node *)hashset_iterator_value(iter);
+		if(hashset_is_member(to->B,node)){
+			FATAL("ERROR:The joint of record:%p and record %p contains %d, is not empty!",to,from,node->rid);
 		}
-		hashset_add(to->B, rid);
-		char rid_str[16];//OKF("merge:%d",(int)(size_t)rid);
-		sprintf(rid_str,"%d",(int)(size_t)rid);
-		map_set(&record_map, rid_str, to);
+		hashset_add(to->B, node);
+		char node_ptr_str[32];//OKF("merge:%d",(int)(size_t)rid);
+		sprintf(node_ptr_str,"%p",node);
+		map_set(&s->record_map, node_ptr_str, to);
 //		char ss2[16];
 //		strcpy(ss2,rid_str);
 //		void **p=map_get(&record_map,ss2);
@@ -6078,7 +6242,7 @@ static inline void  merge_record(Record* to, Record* from)
 //			FATAL("Key mismatch!!!");
 //		}
 	}
-	check_record("A");
+	check_record(s, "A");
 	//Merge Muations
 	for(int i=0;i<MUT_NUM;i++)
 	{
@@ -6101,44 +6265,63 @@ static inline void  merge_record(Record* to, Record* from)
 			map_set(&to->P, pos, *cnt_from);
 		}
 	}
-	check_record("B");
+	check_record(s, "B");
 	//destroy_record(from)
 	hashset_destroy(from->B);
 	map_deinit(&from->P);
 	from->next=NULL;//clear memory
 	free(from);
 }
-static inline void record_value_changing_mutation(Node * node_list[],int size)
+static inline void  record_value_changing_mutation_to_strategy(Node * node_list[],int size,Strategy *s);
+static inline void  record_value_changing_mutation(Node * node_list[],int size){
+	char key[32];
+	sprintf(key,"%d",queue_cur->exec_path_len);
+	void **p=map_get(&trace2strategy, key);
+	Strategy *s;
+	if(!p){
+		/* create strategy */
+		 s=(Strategy *)malloc(sizeof(Strategy));
+	     s->record_list=NULL;
+		 s->trace_len=queue_cur->exec_path_len;
+		 s->hit_cnt=0;
+		 s->need_start_compaign=1;
+		 map_init(&s->record_map);
+		 map_set(&trace2strategy, key, s);
+	}else{
+		s=(Strategy *)*p;
+	}
+	/*if(!branch_attack_mode && target_bb && target_bb->state_based){
+		if(size!=1) return;
+	}*/
+    record_value_changing_mutation_to_strategy(node_list,size,s);
+
+}
+static inline void  record_value_changing_mutation_to_strategy(Node * node_list[],int size,Strategy *s)
 {
 	if(size<=0){
 		FATAL("ridlist size must >0, cur:%d",size);
 	}
-	if(!record_map_initialized)
-	{
-		map_init(&record_map);
-		record_map_initialized=1;
-	}
 	Record * tmp_r=NULL;
 	for(int i=0;i<size;i++)
 	{
-		char node_ptr_str[16];
+		char node_ptr_str[32];
 		sprintf(node_ptr_str,"%p",node_list[i]);
-		void ** p=map_get(&record_map, node_ptr_str);
+		void ** p=map_get(&s->record_map, node_ptr_str);
 		if(p){
 			Record *cur_r=*p;
 			if(!tmp_r){
 				tmp_r=cur_r;
 			}
 			if(cur_r!=tmp_r){
-				check_record("C");
-				merge_record((Record*)tmp_r,(Record*)cur_r);
-				check_record("D");
+				check_record(s, "C");
+				merge_record((Record*)tmp_r,(Record*)cur_r,s);
+				check_record(s, "D");
 			}
 		}
 	}
 	if(tmp_r){//insert to the merged tmp_r
 		Record * r=tmp_r;
-		check_record("E");
+		check_record(s,"E");
 		int origin_num=hashset_num_items(r->B);
 		int disjoint_sum=0;
 		int disjoint_cnt=0;
@@ -6147,8 +6330,49 @@ static inline void record_value_changing_mutation(Node * node_list[],int size)
 				hashset_add(r->B,node_list[i]);
 				char node_ptr_str[32];
 				sprintf(node_ptr_str,"%p",node_list[i]);
-				map_set(&record_map, node_ptr_str, r);
-				disjoint_sum+=node_list[i]->distance;
+				map_set(&s->record_map, node_ptr_str, r);
+
+				double temp_distance;
+				temp_distance=node_list[i]->distance;
+				/*char ptr_str[32];
+				sprintf(ptr_str,"%p",node_list[i]);
+				void **p=map_get(&scc_indicators,ptr_str);
+				if(p){
+					Node * node=(Node*)*p;
+					if(node->distance<0)
+					{
+						FATAL("BB1(%d,%s)-> BB2(node_list[%d],%d,%s), BB1 is  Unreachable"
+								"Please check the `node_list[]` and `scc_indicators`.",
+								node->rid,node->bbname,i,node_list[i]->rid,node_list[i]->bbname);
+					}
+					temp_distance=node->distance;
+				}else if(node_list[i]->distance<0){
+					FATAL("Unreachable BB rid:%d,bbname:%s",node_list[i]->rid,node_list[i]->bbname);
+				}else{
+					temp_distance=node_list[i]->distance;
+				}*//*
+				if(!branch_attack_mode && target_bb && target_bb->state_based){
+					//handle the loop out indicator
+					char ptr_str[32];
+					sprintf(ptr_str,"%p",node_list[i]);
+					void **p=map_get(&scc_indicators,ptr_str);
+					if(!p){
+						FATAL("Unreachable BB rid:%d,bbname:%s",node_list[i]->rid,node_list[i]->bbname);
+					}
+					Node * node=(Node*)*p;
+					if(node->distance<0)
+					{
+						FATAL("BB1(%d,%s)-> BB2(node_list[%d],%d,%s), BB1 is  Unreachable"
+								"Please check the `node_list[]` and `scc_indicators`.",
+								node->rid,node->bbname,i,node_list[i]->rid,node_list[i]->bbname);
+					}
+					temp_distance=node->distance;
+				}else if(node_list[i]->distance<0){
+					FATAL("Unreachable BB rid:%d,bbname:%s",node_list[i]->rid,node_list[i]->bbname);
+				}else{
+					temp_distance=node_list[i]->distance;
+				}*/
+				disjoint_sum+=temp_distance;
 				disjoint_cnt++;
 			}
 		}
@@ -6172,14 +6396,14 @@ static inline void record_value_changing_mutation(Node * node_list[],int size)
 				const char *pos_str;
 				map_iter_t iter = map_iter(&tmp_pos_map[i]);
 				while ((pos_str = map_next(&tmp_pos_map[i], &iter))) {
-					int pos_cnt=*map_get(&tmp_pos_map[i], pos_str);
-					if(!pos_list_str){
-						pos_list_str=alloc_printf("%s[%d]",pos_str,pos_cnt);
-					}else{
-						char *temp_str=pos_list_str;
-						pos_list_str=alloc_printf("%s,%s[%d]",temp_str,pos_str,pos_cnt);
-						ck_free(temp_str);
-					}
+				    int pos_cnt=*map_get(&tmp_pos_map[i], pos_str);
+				    if(!pos_list_str){
+				    	pos_list_str=alloc_printf("%s[%d]",pos_str,pos_cnt);
+				    }else{
+				    	char *temp_str=pos_list_str;
+				    	pos_list_str=alloc_printf("%s,%s[%d]",temp_str,pos_str,pos_cnt);
+				    	ck_free(temp_str);
+				    }
 					int *cnt=map_get(&r->P, pos_str);
 					if(cnt)
 					{
@@ -6190,9 +6414,16 @@ static inline void record_value_changing_mutation(Node * node_list[],int size)
 				}
 			}
 		}
-		check_record("F");
-	}else{
-		check_record("G");
+		char * info = alloc_printf("record-poslist:%s\n",pos_list_str);
+		if(pos_list_str){
+			ck_free(pos_list_str);
+		}
+		char * log_file_name=alloc_printf("%s/value_affected_branch.txt", out_dir);
+		log2file_and_free(log_file_name,info);
+		//OKF("poslist:%s",pos_list_str);
+		check_record(s, "F");
+	}else{//create new record
+		check_record(s, "G");
 		Record * r=(Record *)malloc(sizeof(Record));
 		r->B=hashset_create();
 		r->next=NULL;
@@ -6202,8 +6433,48 @@ static inline void record_value_changing_mutation(Node * node_list[],int size)
 			hashset_add(r->B,node_list[i]);
 			char node_ptr_str[32];
 			sprintf(node_ptr_str,"%p",node_list[i]);
-			map_set(&record_map, node_ptr_str, r);
-			sum+=node_list[i]->distance;
+			map_set(&s->record_map, node_ptr_str, r);
+
+			double temp_distance;
+			temp_distance=node_list[i]->distance;
+			/*char ptr_str[32];
+			sprintf(ptr_str,"%p",node_list[i]);
+			void **p=map_get(&scc_indicators,ptr_str);
+			if(p){
+				Node * node=(Node*)*p;
+				if(node->distance<0)
+				{
+					FATAL("BB1(%d,%s)-> BB2(node_list[%d],%d,%s), BB1 is  Unreachable"
+							"Please check the `node_list[]` and `scc_indicators`.",
+							node->rid,node->bbname,i,node_list[i]->rid,node_list[i]->bbname);
+				}
+				temp_distance=node->distance;
+			}else if(node_list[i]->distance<0){
+				FATAL("Unreachable BB rid:%d,bbname:%s",node_list[i]->rid,node_list[i]->bbname);
+			}else{
+				temp_distance=node_list[i]->distance;
+			}*//*
+			if(!branch_attack_mode && target_bb && target_bb->state_based){
+				char ptr_str[32];
+				sprintf(ptr_str,"%p",node_list[i]);
+				void **p=map_get(&scc_indicators,ptr_str);
+				if(!p){
+					FATAL("Unreachable BB rid:%d,bbname:%s",node_list[i]->rid,node_list[i]->bbname);
+				}
+				Node * node=(Node*)*p;
+				if(node->distance<0)
+				{
+					FATAL("BB1(%d,%s)-> BB2(node_list[%d],%d,%s), BB1 is  Unreachable"
+							"Please check the `node_list[]` and `scc_indicators`.",
+							node->rid,node->bbname,i,node_list[i]->rid,node_list[i]->bbname);
+				}
+				temp_distance=node->distance;
+			}else if(node_list[i]->distance<0){
+				FATAL("Unreachable BB rid:%d,bbname:%s",node_list[i]->rid,node_list[i]->bbname);
+			}else{
+				temp_distance=node_list[i]->distance;
+			}*/
+			sum+=temp_distance;
 		}
 		r->distance=sum/size;
 		if(r->distance-0.0<0.0001){
@@ -6246,13 +6517,13 @@ static inline void record_value_changing_mutation(Node * node_list[],int size)
 		char * log_file_name=alloc_printf("%s/value_affected_branch.txt", out_dir);
 		log2file_and_free(log_file_name,info);
 		//OKF("poslist:%s",pos_list_str);
-		if(record_list==NULL){
-			record_list=r;
+		if(s->record_list==NULL){
+			s->record_list=r;
 		}else{
-			r->next=record_list;
-			record_list=r;
+			r->next=s->record_list;
+			s->record_list=r;
 		}
-		check_record("I");
+		check_record(s, "I");
 	}
 
 	//print_mutation_table(-1);
@@ -6372,7 +6643,7 @@ static inline int gen_pos_from_record(Record *r,int debug)
 	}
 	return atoi(key);
 }
-static inline int gen_pos_from_record_list(int debug)
+static inline int gen_pos_from_record_list(Record * record_list, int debug)
 {
 	if(!record_list){
 		FATAL("record_list==NULL !");
@@ -6409,15 +6680,20 @@ static inline int gen_pos_from_record_list(int debug)
 	return -1;//this should not happen
 
 }
-static inline Record * gen_record(Record *record_list)
+static inline Record * select_record(Record *record_list)
 {
-	if(!record_list)return NULL;
+	if(!record_list) return NULL;
 	double sum=0;
 	Record *r=NULL;
 	for(r =record_list;r!=NULL;r=r->next)
 	{
 		//sum+=(max_gd-r->distance+1);
+		if(r->distance-0.0<0.0001)
+		{
+			FATAL("Illegal Zero Distance! r->distance=%f,min_gd=%f",r->distance,min_gd);
+		}
 		sum+=200/(r->distance-0.95)+1;
+		//OKF("r=%p,distance=%f,sum=%f",r,r->distance,sum);
 	}
 	if(sum==0)FATAL("ERROR when calculating sum r=%p",r);
 	int rand0=UR((int)(sum));
@@ -6426,7 +6702,8 @@ static inline Record * gen_record(Record *record_list)
 	{
 		//sum2+=(max_gd-r->distance+1);
 		sum+=200/(r->distance-0.95)+1;
-		if(sum>=rand0){
+		//OKF("sum:%f,rand0=%d",sum,rand0);
+		if(sum-rand0>=0.0001){
 			break;//we select a record "r"
 		}
 	}
@@ -6440,6 +6717,22 @@ static inline void dispatch_random(u32 range,s32 len,u32 * arg)
 	if (mut_prior_mode)
 	{
 
+		/* find suitable template strategy */
+		char exec_path_len_str[32]={'\0'};
+		sprintf(exec_path_len_str,"%d",queue_cur->exec_path_len);
+		void **p=map_get(&trace2strategy,exec_path_len_str);
+		Strategy *s;
+		if(!p){
+			s=(Strategy *) malloc(sizeof(Strategy));
+			s->record_list=NULL;
+			s->trace_len=queue_cur->exec_path_len;
+			s->hit_cnt=0;
+			s->need_start_compaign=1;
+			map_init(&s->record_map);
+			map_set(&trace2strategy,exec_path_len_str,s);
+		}else{
+			s=(Strategy *)*p;
+		}
 		//check if there exists an margin BB with distance==min_d(minimal distance of current margin BB set)
 		//and we do not have corresponding variable impacting records.
 		//if so we linearly search for good position
@@ -6457,14 +6750,14 @@ static inline void dispatch_random(u32 range,s32 len,u32 * arg)
 		if(!target_bb||target_bb->state_based){
 			goto monitor;
 		}
-		if(need_start_compaign){
+		if(s->need_start_compaign){
 			//start a compaign to attack this branch
 			branch_attack_mode=1;
 			WARNF("start attack %d",target_bb->rid);
 			linear_search=1;
 			search_round1=0;
 			search_round2=0;
-			need_start_compaign=0;
+			s->need_start_compaign=0;
 			if (extras_cnt>0||a_extras_cnt>0){
 				mutator_search=16;
 			}else{
@@ -6501,16 +6794,21 @@ static inline void dispatch_random(u32 range,s32 len,u32 * arg)
 			int just_finish_linear_search=0;
 			char rid_str[16];
 			sprintf(rid_str,"%d",target_bb->rid);
-			void ** p=map_get(&record_map,rid_str);
+			void ** p=map_get(&s->record_map,rid_str);
 			if(linear_search){
 				linear_search=0;
 				just_finish_linear_search=1;
 				WARNF("finish linear search for %d %s, scaned:%d",target_bb->rid,target_bb->bbname,pos_inc);
 				if(!p){
-					target_bb->state_based=1;
 					branch_attack_mode=0;
 					mutator_search=-1;
-					goto monitor;
+					if(!target_bb->state_based){
+						target_bb->state_based=1;
+						cleanup_value_changing_mutation_record();
+						goto random;
+					}else{
+						goto monitor;
+					}
 				}
 			}
 			if(!p){
@@ -6533,7 +6831,7 @@ static inline void dispatch_random(u32 range,s32 len,u32 * arg)
 		}
 		//do normal record utilization muations
 monitor:
-		if(record_list)
+		if(s->record_list)
 		{
 			int valid_mut[MUT_NUM];
 			int bound_values[MUT_NUM];
@@ -6554,7 +6852,7 @@ monitor:
 //			}
 //			avg/=cnnt;
 
-			Record *r=gen_record(record_list);
+			Record *r=select_record(s->record_list);
 
 			for(int i=1;i<MUT_NUM;i++)
 			{
@@ -10028,7 +10326,51 @@ int main(int argc, char** argv) {
         seek_to--;
         queue_cur = queue_cur->next;
       }
+      /* add by yangke start
+	  if(target_bb && target_bb->state_based){
+		  struct queue_entry * queue_cur_bak=queue_cur;
+		  char key[32];
+		  sprintf(key,"%d",queue_cur->exec_path_len);
+		  void **p=map_get(&trace2strategy,key);
+		  if(!p){
+			  goto skip_hit_cnt;
+		  }
+		  int hit_cnt =((Strategy *)*p)->hit_cnt;
+		  while(queue_cur && hit_cnt > avg_hit_cnt  && queue_cur->exec_path_len<max_trace_len && UR(100)<75){
+			  queue_cur=queue_cur->next;
+			  if(!queue_cur) break;
+			  char key[32];
+			  sprintf(key,"%d",queue_cur->exec_path_len);
+			  void **p=map_get(&trace2strategy,key);
+			  if(!p){
+				  goto skip_hit_cnt;
+			  }
+				hit_cnt =((Strategy *)*p)->hit_cnt;
 
+		  }
+		  if(!queue_cur){
+			  queue_cur         = queue;
+			  char key[32];
+			  sprintf(key,"%d",queue_cur->exec_path_len);
+			  int hit_cnt =((Strategy *)*map_get(&trace2strategy,key))->hit_cnt;
+			  while(queue_cur && hit_cnt > avg_hit_cnt  && queue_cur->exec_path_len<max_trace_len && UR(100)<75){
+				  queue_cur=queue_cur->next;
+				  if(!queue_cur) break;
+				  char key[32];
+				  sprintf(key,"%d",queue_cur->exec_path_len);
+				  void **p=map_get(&trace2strategy,key);
+				  if(!p){
+					  goto skip_hit_cnt;
+				  }
+				  hit_cnt =((Strategy *)*p)->hit_cnt;
+			  }
+		  }
+		  if(!queue_cur){
+			  queue_cur=queue_cur_bak;
+		  }
+	  }
+skip_hit_cnt:
+	 add by yangke end */
       show_stats();
 
       if (not_on_tty) {

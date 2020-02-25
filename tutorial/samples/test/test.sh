@@ -48,7 +48,8 @@ if [ -f time${TIME2}-${TARGET}-aflgo-bad.txt ];then
 	rm time${TIME2}-${TARGET}-aflgo-bad.txt
 fi
 
-for((i=1;i<=$((ITER));i++));  
+
+for((i=1;i<=$((ITER));i++)); 
 do
 # Construct seed corpus
 
@@ -65,6 +66,7 @@ if [ "$ERR_STR1" != "" -o "$ERR_STR2" != "" ];then
 	exit 1
 fi
 done
+
 
 for((i=1;i<=$((ITER));i++));  
 do
