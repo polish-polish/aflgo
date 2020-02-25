@@ -323,7 +323,8 @@ static s32 interesting_32[] = { INTERESTING_8, INTERESTING_16, INTERESTING_32 };
 #define MUT_NUM 17
 static int mut[MUT_NUM][MAX_MUT_POS];//e.g. mut[0][2] mut times of BIT_FLIP(opcode is 0,see afl-fuzz.c:6566) at byte with offset 2 of the input
 static int mut_cnt[MUT_NUM];//mutation times of a each kind of mution (for value effective filtration).
-static int tmp_mut[MUT_NUM][MAX_MUT_POS];
+static map_int_t tmp_pos_map[MUT_NUM];
+static u8 tmp_pos_map_initialized=0;
 static int tmp_mut_cnt[MUT_NUM];
 static int one_fuzz_mut_cnt[MUT_NUM];//mutation times of a each kind of mution(for cov effective statistics)
 static int mut_score[MUT_NUM];//based on cov effective statistics
@@ -376,7 +377,6 @@ typedef struct record{
 	struct record * next;
 } Record;
 
-
 typedef struct {
 	int cur_size;
 	int max_size;
@@ -396,7 +396,6 @@ static int margin_bb_count=0;
 static double min_d=1.7E+308;//min distance of margin basic block, initialize in loadCFG().
 static double min_gd=1.7E+308;//min distance of strong connected margin basic block group, initialize in record_value_changing_mutation().
 static double max_gd=0.0;//max distance of strong connected margin basic block group, initialize in record_value_changing_mutation().
-
 
 static Record * record_list=NULL;
 static map_void_t record_map;
@@ -3387,6 +3386,11 @@ void destroy_records()
 		map_deinit(&r->P);
 		free(r);
 	}
+	for(int i=0;i<MUT_NUM;i++){
+		map_deinit(&tmp_pos_map[i]);
+	}
+	value_changing_mutation_record_initialized=0;
+	tmp_pos_map_initialized=0;
 }
 static inline void init_container(Container * c){
 	c->cur_size=0;
@@ -5855,50 +5859,53 @@ static u8 could_be_interest(u32 old_val, u32 new_val, u8 blen, u8 check_le) {
 }
 
 /* add by yangke start */
-
-
-static inline void cleanup_value_changing_mutation_record()
+static inline void init_value_changing_mutation_record()
 {
 	total_mut_cnt=0;
 	total_monitored_mut_cnt=0;
 	for(int i=0;i<MUT_NUM;i++)
 	{
 		mut_cnt[i]=0;
-		for(int j=0;j<MAX_MUT_POS;j++)
-		{
-			mut[i][j]=0;
-		}
 	}
-	destroy_records();
 	map_init(&record_map);
+}
+static inline void init_mutation_score()
+{
+	for(int i=0;i<MUT_NUM;i++)
+	{
+		mut_score[i]=0;
+	}
+}
+static inline void cleanup_value_changing_mutation_record()
+{
+	map_deinit(&record_map);
+	Record *r;
+	while(record_list!=NULL){
+		r=record_list;
+		record_list=r->next;
+		hashset_destroy(r->B);
+		map_deinit(&r->P);
+		free(r);
+	}
+	init_value_changing_mutation_record();
 }
 
 static inline void cleanup_possible_value_changing_mutation_record()
 {
-	for(int i=0;i<MUT_NUM;i++)
-	{
-		tmp_mut_cnt[i]=0;
-		for(int j=0;j<MAX_MUT_POS;j++)
-		{
-			tmp_mut[i][j]=0;
-		}
-	}
-}
-static inline void init_value_changing_mutation_record()
-{
-	if (value_changing_mutation_record_initialized==0){
-		cleanup_value_changing_mutation_record();
-		value_changing_mutation_record_initialized=1;
-	}
-}
-static inline void init_mutation_score()
-{
-	if(mutation_score_initialized==0){
+
+	if(!tmp_pos_map_initialized){
 		for(int i=0;i<MUT_NUM;i++)
 		{
-			mut_score[i]=0;
+			map_init(&tmp_pos_map[i]);
 		}
-		mutation_score_initialized=1;
+		tmp_pos_map_initialized=1;
+	}else{
+		for(int i=0;i<MUT_NUM;i++)
+		{
+			tmp_mut_cnt[i]=0;
+			map_deinit(&tmp_pos_map[i]);
+			map_init(&tmp_pos_map[i]);
+		}
 	}
 }
 static inline void cleanup_mutation_record()
@@ -6155,26 +6162,30 @@ static inline void record_value_changing_mutation(Node * node_list[],int size)
 		if(r->distance>max_gd){
 			max_gd=r->distance;
 		}
+		char * pos_list_str=NULL;
 		for(int i=0;i<MUT_NUM;i++)
 		{
 			if(tmp_mut_cnt[i]>0)
 			{
 				r->M[i]+=tmp_mut_cnt[i];
 				mut_cnt[i]+=tmp_mut_cnt[i];
-				for(int j=0;j<MAX_MUT_POS;j++)
-				{
-					if(tmp_mut[i][j]>0)
+				const char *pos_str;
+				map_iter_t iter = map_iter(&tmp_pos_map[i]);
+				while ((pos_str = map_next(&tmp_pos_map[i], &iter))) {
+					int pos_cnt=*map_get(&tmp_pos_map[i], pos_str);
+					if(!pos_list_str){
+						pos_list_str=alloc_printf("%s[%d]",pos_str,pos_cnt);
+					}else{
+						char *temp_str=pos_list_str;
+						pos_list_str=alloc_printf("%s,%s[%d]",temp_str,pos_str,pos_cnt);
+						ck_free(temp_str);
+					}
+					int *cnt=map_get(&r->P, pos_str);
+					if(cnt)
 					{
-						char * key=alloc_printf("%d",j);
-						int *cnt=map_get(&r->P, key);
-						ck_free(key);
-						if(cnt)
-						{
-							map_set(&r->P, key,*cnt+tmp_mut[i][j]);
-						}else{
-							map_set(&r->P, key, tmp_mut[i][j]);
-						}
-						mut[i][j]+=tmp_mut[i][j];
+						map_set(&r->P, pos_str,*cnt+pos_cnt);
+					}else{
+						map_set(&r->P, pos_str,pos_cnt);
 					}
 				}
 			}
@@ -6206,24 +6217,35 @@ static inline void record_value_changing_mutation(Node * node_list[],int size)
 		}
 		map_init(&(r->P));
 		memset(r->M,0,sizeof(int)*17);
+		char * pos_list_str=NULL;
 		for(int i=0;i<MUT_NUM;i++)
 		{
 			if(tmp_mut_cnt[i]>0)
 			{
 				r->M[i]+=tmp_mut_cnt[i];
 				mut_cnt[i]+=tmp_mut_cnt[i];
-				for(int j=0;j<MAX_MUT_POS;j++)
-				{
-					if(tmp_mut[i][j]>0)
-					{
-						char * key=alloc_printf("%d",j);
-						map_set(&r->P, key, tmp_mut[i][j]);
-						ck_free(key);
-						mut[i][j]+=tmp_mut[i][j];
+				const char *pos_str;
+				map_iter_t iter = map_iter(&tmp_pos_map[i]);
+				while ((pos_str = map_next(&tmp_pos_map[i], &iter))) {
+					int pos_cnt=*map_get(&tmp_pos_map[i], pos_str);
+					if(!pos_list_str){
+						pos_list_str=alloc_printf("%s[%d]",pos_str,pos_cnt);
+					}else{
+						char *temp_str=pos_list_str;
+						pos_list_str=alloc_printf("%s,%s[%d]",temp_str,pos_str,pos_cnt);
+						ck_free(temp_str);
 					}
+					map_set(&r->P, pos_str, pos_cnt);
 				}
 			}
 		}
+		char * info = alloc_printf("record-poslist:%s\n",pos_list_str);
+		if(pos_list_str){
+			ck_free(pos_list_str);
+		}
+		char * log_file_name=alloc_printf("%s/value_affected_branch.txt", out_dir);
+		log2file_and_free(log_file_name,info);
+		//OKF("poslist:%s",pos_list_str);
 		if(record_list==NULL){
 			record_list=r;
 		}else{
@@ -6266,7 +6288,14 @@ static inline void record_possible_value_changing_mutation(int index, int pos)
 		//WARNF("mut[index=%d][pos=%d]+=1; //afl-fuzz.c:5373",index,pos);
 		//WARNF("HEY! YANGKE! Mutation pos(=%d) out of bound(MAX_MUT_POS=%d)!",pos,MAX_MUT_POS);
 	}else {
-		tmp_mut[index][pos]+=1;
+		char * pos_str=alloc_printf("%d",pos);
+		int * cur_cnt=map_get(&tmp_pos_map[index],pos_str);
+		if(cur_cnt){
+			map_set(&tmp_pos_map[index],pos_str,*cur_cnt+1);
+		}else{
+			map_set(&tmp_pos_map[index],pos_str,1);
+		}
+		ck_free(pos_str);
 		tmp_mut_cnt[index]++;
 	}
 }
@@ -7802,8 +7831,10 @@ havoc_stage:
 
   s32 my_stage_max=stage_max;
 
-  init_mutation_score();
-  init_value_changing_mutation_record();
+  if(mutation_score_initialized==0){
+	  init_mutation_score();
+  	  mutation_score_initialized=1;
+  }
   cleanup_mutation_record();
   if (cycles_wo_finds >=threshold_cycles_wo_finds){//in this case we take small steps
 	  /*if(!mut_prior_mode&&t1==0){
@@ -7813,6 +7844,10 @@ havoc_stage:
 	  my_stage_max=stage_max<max_mut_loop_bound?stage_max:max_mut_loop_bound;
 	  //OKF("stage_max=%d,max_mut_loop_bound=%d",stage_max,max_mut_loop_bound);
 	  //flush out rubbish and next time we record new candidates
+	  if (value_changing_mutation_record_initialized==0){
+	  	  init_value_changing_mutation_record();
+	  	  value_changing_mutation_record_initialized=1;
+	  }
 	  cleanup_possible_value_changing_mutation_record();
   }/*else{
 	  mut_prior_mode=0;
