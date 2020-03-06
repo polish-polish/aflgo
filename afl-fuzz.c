@@ -386,7 +386,6 @@ typedef struct strategy{
 	map_void_t record_map;
 	u32 trace_len;
 	u32 hit_cnt;
-	u8 need_start_compaign;
 } Strategy;
 
 typedef struct {
@@ -413,14 +412,20 @@ static map_void_t trace2strategy;
 static int cfg_loaded=0;
 static int vertex_num=0;
 static int edge_num=0;
-static Node * target_bb=NULL;
-static char target_function[64]={'\0'};
+typedef struct Target{
+	Node* node;
+	char function[64];
+	u8 attacking;
+	map_int_t trace2fuzz_pos;
+} Target;
+Target * target_bb;
+u8 linear_search=0;
 
 static u32 trace_len(u8* mem);
-static inline void record_value_changing_mutation(Node * node_list[],int size);
+static inline void record_value_changing_mutation(Node * node_list[],int size,Strategy * s);
 //static inline void add_to_invlaid_positions(int index);
 static inline void cleanup_value_changing_mutation_record();
-static int branch_attack_mode=0;
+
 /* add by yangke end */
 
 /* Fuzzing stages */
@@ -3451,7 +3456,10 @@ static inline void destroy_container(Container * c){
 	c->cur_size=0;
 	c->max_size=0;
 }
-
+static inline void destroy_target(){
+	map_deinit(&target_bb->trace2fuzz_pos);
+	free(target_bb);
+}
 
 void destroy_all_cfg()
 {
@@ -3742,22 +3750,22 @@ static void update_margin_bbs()
 								}
 								min_d=node->distance;
 								char key[32];
-								sprintf(key,"%d",queue_cur->exec_path_len);
+								sprintf(key,"%d",cur_trace_len);
 								void **p=map_get(&trace2strategy, key);
 								Strategy *s;
 								if(!p){
 								   s=(Strategy *)malloc(sizeof(Strategy));
 								   s->record_list=NULL;
-								   s->trace_len=queue_cur->exec_path_len;
 								   s->hit_cnt=0;
-								   s->need_start_compaign=1;
 								   map_init(&s->record_map);
 								   map_set(&trace2strategy, key, s);
-								}else{
-									((Strategy *)*p)->need_start_compaign=1;
 								}
-								target_bb=node;
-								strcpy(target_function,fname);
+								target_bb->node=node;
+								target_bb->attacking=1;
+								map_deinit(&target_bb->trace2fuzz_pos);
+								map_init(&target_bb->trace2fuzz_pos);
+								map_set(&target_bb->trace2fuzz_pos,key,0);
+								strcpy(target_bb->function,fname);
 							}
 
 //							//DEBUG CODE
@@ -3910,9 +3918,7 @@ static inline u8 update_hit_cnt()
 	  /* create strategy */
 	  s=(Strategy *)malloc(sizeof(Strategy));
 	  s->record_list=NULL;
-	  s->trace_len=cur_trace_len;
 	  s->hit_cnt=0;
-	  s->need_start_compaign=1;
 	  map_init(&s->record_map);
 	  map_set(&trace2strategy, key, s);
 	  /* calculate the average hit_cnt */
@@ -3969,7 +3975,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 		  int rid_list_str_size=margin_bb_count<<6;
 		  char rid_list_str[rid_list_str_size];
 		  char *ptr=rid_list_str;
-		  //u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
+		  u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
 		  if (cnt>0){
 			  for(int i=0;i<cnt;i++){
 				  //ptr+=sprintf(ptr,"%p,%d,%llx;",node_list[i], node_list[i]->rid, cur[node_list[i]->rid]);
@@ -3986,25 +3992,58 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 			  u8 * info=alloc_printf("len=%d,affected %d branch:%s,margin_bb_count:%d,%s\n",cur_trace_len,cnt,rid_list_str,margin_bb_count,(char *)mem);
 			  log2file_and_free(log_file_name,info);
 
-			  if(!branch_attack_mode && target_bb && target_bb->state_based){
+			  char key[32];
+			  sprintf(key,"%d",queue_cur->exec_path_len);
+			  void **p=map_get(&trace2strategy, key);
+			  Strategy *s;
+			  if(!p){
+				   /* create strategy */
+				   s=(Strategy *)malloc(sizeof(Strategy));
+				   s->record_list=NULL;
+				   s->hit_cnt=0;
+				   map_init(&s->record_map);
+				   map_set(&trace2strategy, key, s);
+			  }else{
+				  s=(Strategy *)*p;
+			  }
+			  sprintf(key,"%d",cur_trace_len);
+			  if(!map_get(&trace2strategy, key)){
+				   /* create strategy */
+				   Strategy * ss=(Strategy *)malloc(sizeof(Strategy));
+				   ss->record_list=NULL;
+				   ss->hit_cnt=0;
+				   map_init(&ss->record_map);
+				   map_set(&trace2strategy, key, ss);
+				   if(target_bb->node && 0xffffffffffffffff!=cur[target_bb->node->rid]){
+						target_bb->attacking+=1;
+						if(!map_get(&target_bb->trace2fuzz_pos,key)){
+							map_set(&target_bb->trace2fuzz_pos,key,0);
+						}else{
+							FATAL("This should not happen!");
+						}
+				   }
+			  }
+
+			  if(target_bb->node && target_bb->attacking<=0 && target_bb->node->state_based){
 
 				  /* record mutations that affects deepest state*/
 				  if(cur_trace_len>=queue_cur->exec_path_len)
 				  {
-					  record_value_changing_mutation(node_list,cnt);
+					  FATAL("HHHH");
+					  record_value_changing_mutation(node_list,cnt,s);
 				  }
 
 			  }else{
 				  /* record mutations that affects condition forks not completely covered */
-				  record_value_changing_mutation(node_list,cnt);
+				  record_value_changing_mutation(node_list,cnt,s);
 			  }
 			  //int ret0 = update_hit_cnt();
 			  //if(ret0)
 				//  return 0;
 		  }else{
-			  if (!branch_attack_mode && target_bb!=NULL && !target_bb->state_based &&  cycles_wo_finds >=len*10){
+			  if (target_bb->node && target_bb->attacking<=0 && !target_bb->node->state_based &&  cycles_wo_finds >=len*10){
 
-				  target_bb->state_based=1;
+				  target_bb->node->state_based=1;
 				  //cleanup_value_changing_mutation_record();
 			  }
 			  /*for(int i=0;i<margin_bb_count;i++)
@@ -4025,7 +4064,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     else{//new coverage findings
     	////examin mutations that contribute to this new coverage
     	if (cycles_wo_finds >=threshold_cycles_wo_finds){
-    		if(!branch_attack_mode && target_bb && target_bb->state_based){
+    		if(target_bb->node && target_bb->attacking<=0 && target_bb->node->state_based){
 				if(cur_trace_len>=queue_cur->exec_path_len){
 					for(int i=0;i<MUT_NUM;i++)
 					{
@@ -4071,27 +4110,38 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 			if (!cfg_loaded)
 				loadCFG();
 			update_margin_bbs();
-			if(!branch_attack_mode && target_bb && target_bb->state_based){
 
-				Strategy * s;
-				if(cur_trace_len > queue_cur->exec_path_len ){
-					char key[32];
+			char key[32];
+			sprintf(key,"%d",cur_trace_len);
+			void **p= map_get(&trace2strategy,key);
+			if(!p){
+				Strategy * s=(Strategy *)malloc(sizeof(Strategy));
+				s->record_list=NULL;
+				s->hit_cnt=0;
+				map_init(&s->record_map);
+				map_set(&trace2strategy, key, s);
+			}
+
+			if(target_bb->node){
+				u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
+				if(0xffffffffffffffff==cur[target_bb->node->rid]){
+				    return 0;
+				}else{//trigger target
+					target_bb->attacking+=1;
+					char key[16];
 					sprintf(key,"%d",cur_trace_len);
-					void **p= map_get(&trace2strategy,key);
-					if(!p){
-						s=(Strategy *)malloc(sizeof(Strategy));
-						s->record_list=NULL;
-						s->trace_len=cur_trace_len;
-						s->hit_cnt=0;
-						s->need_start_compaign=1;
-						map_init(&s->record_map);
-						map_set(&trace2strategy, key, s);
+					if(!map_get(&target_bb->trace2fuzz_pos,key)){
+						map_set(&target_bb->trace2fuzz_pos,key,0);
+					}else if(!p){
+						FATAL("This should not happen!!!");
 					}
-					/*if(cur_trace_len > max_trace_len){
-						cleanup_scc_indicator_value();
-					}*/
 				}
 			}
+
+
+			/*if(cur_trace_len > max_trace_len){
+				cleanup_scc_indicator_value();
+			}*/
 /*
 			  int ridlist[margin_bb_count];
 			  int cnt=has_new_var_bits(virgin_var_bits,ridlist);
@@ -4124,7 +4174,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
 			//t1=t2=t3=0;
 			//cleanup_value_changing_mutation_record();
-			/*if (!branch_attack_mode && target_bb && target_bb->state_based){
+			/*if (target_bb->node && target_bb->attacking<=0 && target_bb->node->state_based){
 				cleanup_value_changing_mutation_record();
 				WARNF("clean UP!");
 			}*/
@@ -4305,6 +4355,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 	  destroy_queue();
 	  destroy_extras();
 	  destroy_all_cfg();
+	  destroy_target();
 	  destroy_records();
 	  ck_free(target_path);
 	  ck_free(sync_id);
@@ -6272,31 +6323,8 @@ static inline void  merge_record(Record* to, Record* from,Strategy *s)
 	from->next=NULL;//clear memory
 	free(from);
 }
-static inline void  record_value_changing_mutation_to_strategy(Node * node_list[],int size,Strategy *s);
-static inline void  record_value_changing_mutation(Node * node_list[],int size){
-	char key[32];
-	sprintf(key,"%d",queue_cur->exec_path_len);
-	void **p=map_get(&trace2strategy, key);
-	Strategy *s;
-	if(!p){
-		/* create strategy */
-		 s=(Strategy *)malloc(sizeof(Strategy));
-	     s->record_list=NULL;
-		 s->trace_len=queue_cur->exec_path_len;
-		 s->hit_cnt=0;
-		 s->need_start_compaign=1;
-		 map_init(&s->record_map);
-		 map_set(&trace2strategy, key, s);
-	}else{
-		s=(Strategy *)*p;
-	}
-	/*if(!branch_attack_mode && target_bb && target_bb->state_based){
-		if(size!=1) return;
-	}*/
-    record_value_changing_mutation_to_strategy(node_list,size,s);
 
-}
-static inline void  record_value_changing_mutation_to_strategy(Node * node_list[],int size,Strategy *s)
+static inline void  record_value_changing_mutation(Node * node_list[],int size,Strategy *s)
 {
 	if(size<=0){
 		FATAL("ridlist size must >0, cur:%d",size);
@@ -6351,7 +6379,7 @@ static inline void  record_value_changing_mutation_to_strategy(Node * node_list[
 				}else{
 					temp_distance=node_list[i]->distance;
 				}*//*
-				if(!branch_attack_mode && target_bb && target_bb->state_based){
+				if(target_bb->node && target_bb->attacking<=0 && target_bb->node->state_based){
 					//handle the loop out indicator
 					char ptr_str[32];
 					sprintf(ptr_str,"%p",node_list[i]);
@@ -6454,7 +6482,7 @@ static inline void  record_value_changing_mutation_to_strategy(Node * node_list[
 			}else{
 				temp_distance=node_list[i]->distance;
 			}*//*
-			if(!branch_attack_mode && target_bb && target_bb->state_based){
+			if(target_bb->node && target_bb->attacking<=0 && target_bb->node->state_based){
 				char ptr_str[32];
 				sprintf(ptr_str,"%p",node_list[i]);
 				void **p=map_get(&scc_indicators,ptr_str);
@@ -6604,13 +6632,6 @@ static inline int binary_search(const int values[],int len,int query_value){
 	//low is the index we want.
 }
 
-static int pos_inc=0;
-#define MUT_SEARCH_TIMES 16
-static int mutator_search=MUT_SEARCH_TIMES;
-
-static int search_round1=0;
-static int search_round2=0;
-static int linear_search=0;
 static inline int gen_pos_from_record(Record *r,int debug)
 {
 	int sum=0;
@@ -6709,7 +6730,7 @@ static inline Record * select_record(Record *record_list)
 	}
 	return r;
 }
-static inline void dispatch_random(u32 range,s32 len,u32 * arg)
+static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 {//still buggy
 	arg[0]=-1;
 	arg[1]=-1;
@@ -6725,9 +6746,7 @@ static inline void dispatch_random(u32 range,s32 len,u32 * arg)
 		if(!p){
 			s=(Strategy *) malloc(sizeof(Strategy));
 			s->record_list=NULL;
-			s->trace_len=queue_cur->exec_path_len;
 			s->hit_cnt=0;
-			s->need_start_compaign=1;
 			map_init(&s->record_map);
 			map_set(&trace2strategy,exec_path_len_str,s);
 		}else{
@@ -6737,99 +6756,34 @@ static inline void dispatch_random(u32 range,s32 len,u32 * arg)
 		//and we do not have corresponding variable impacting records.
 		//if so we linearly search for good position
 		//if search failed we go to random
-		int with_dict[]={10,15,1,4,5};//they are cases without break exception
-		int without_dict[]={10,1,4,5};//they are cases without break exception
-		int *mut_list;
-		if (extras_cnt>0||a_extras_cnt>0){
-			mut_list=with_dict;
-		}else{
-			mut_list=without_dict;
-		}
-		//int havoc_mut_list[]={11,12,13,14,16};
-		int *search_round=&search_round1;
-		if(!target_bb||target_bb->state_based){
+//		int with_dict[]={10,15,1,4,5};//they are cases without break exception
+//		int without_dict[]={10,1,4,5};//they are cases without break exception
+
+		if(!target_bb->node||target_bb->node->state_based){
 			goto monitor;
 		}
-		if(s->need_start_compaign){
-			//start a compaign to attack this branch
-			branch_attack_mode=1;
-			WARNF("start attack %d",target_bb->rid);
-			linear_search=1;
-			search_round1=0;
-			search_round2=0;
-			s->need_start_compaign=0;
-			if (extras_cnt>0||a_extras_cnt>0){
-				mutator_search=16;
-			}else{
-				mutator_search=14;
-			}
-			pos_inc=0;
-			arg[0]=mut_list[*search_round];
-			arg[1]=pos_inc++;
-			//OKF("A mut=%d,pos=%d",arg[0],arg[1]);
-			return;
-		}else if(branch_attack_mode && linear_search && pos_inc<len){
-			arg[0]=mut_list[*search_round];
-			arg[1]=pos_inc++;
-			//OKF("B mut=%d,pos=%d",arg[0],arg[1]);
-			return;
-		}else if(branch_attack_mode && linear_search && search_round1<3){
-			search_round=&search_round1;
-			search_round1++;
-			pos_inc=0;
-			arg[0]=mut_list[*search_round];
-			arg[1]=pos_inc++;
-			//OKF("C mut=%d,pos=%d",arg[0],arg[1]);
-			return;
-		}/*else if(target_bb && branch_attack_mode && linear_search && search_round2<5){
-			OKF("Linear meek search discovered nothing! Maybe we need Clone, Insert or Delete mutations");
-			search_round=&search_round2;
-			search_round2++;
-			pos_inc=0;
-			mut_list=havoc_mut_list;
-			arg[0]=mut_list[*search_round];
-			arg[1]=pos_inc++;
-			return;
-		}*/else if(branch_attack_mode && mutator_search>0){
-			int just_finish_linear_search=0;
-			char rid_str[16];
-			sprintf(rid_str,"%d",target_bb->rid);
-			void ** p=map_get(&s->record_map,rid_str);
-			if(linear_search){
-				linear_search=0;
-				just_finish_linear_search=1;
-				WARNF("finish linear search for %d %s, scaned:%d",target_bb->rid,target_bb->bbname,pos_inc);
-				if(!p){
-					branch_attack_mode=0;
-					mutator_search=-1;
-					if(!target_bb->state_based){
-						target_bb->state_based=1;
-						cleanup_value_changing_mutation_record();
-						goto random;
-					}else{
-						goto monitor;
-					}
-				}
-			}
+		if(target_bb->attacking>0 && queue_cur->exec_path_len>0){
+			//linear search to attack this branch
+			char key[16];
+			sprintf(key,"%d",queue_cur->exec_path_len);
+			int *p=map_get(&target_bb->trace2fuzz_pos,key);
+			int pos;
 			if(!p){
 				goto monitor;
-				FATAL("Maybe you called cleanup_value_changing_mutation_record() when branch_attack_mode=1. Please fix it!");
+			}else{
+			   pos=*p;
 			}
-			arg[0]=mutator_search;
-			Record *r =*(Record **)p;
-			arg[1]=gen_pos_from_record(r,just_finish_linear_search);
-			mutator_search--;
-			if(mutator_search<=0){
-				branch_attack_mode=0;//target_bb is not state_based, now we utilize the records to solve it
+			if(0<pos && pos<len){
+				arg[0]=10;
+				arg[1]=*map_get(&target_bb->trace2fuzz_pos,key);
+				map_set(&target_bb->trace2fuzz_pos,key,arg[1]+1);
+				return 1;
+			}else if(pos>=len){
+				target_bb->attacking-=1;
+				map_set(&target_bb->trace2fuzz_pos,key,-1);
 			}
-			return;
+
 		}
-		if(linear_search)FATAL("You forgot to close linear_search before here!");
-		if(branch_attack_mode){
-			branch_attack_mode=0;
-			FATAL("You forgot to close branch_attack_mode before here!");
-		}
-		//do normal record utilization muations
 monitor:
 		if(s->record_list)
 		{
@@ -6875,7 +6829,7 @@ monitor:
 			if (mut_prior_mode==1 && valid_mut_cnt>0 && rand<VALUE_CHANGE_STRATEGY_BOUND){//75%
 				//select mutation
 				int th=35;//35//40;
-				if(target_bb->state_based){
+				if(target_bb->node->state_based){
 					th=40;//40//75
 				}
 				if(perfect_mut_cnt>0 && rand <th){
@@ -6887,14 +6841,14 @@ monitor:
 				}else{
 					arg[0]=UR(range);
 				}
-				if(target_bb->state_based && rand%2>0){
+				if(target_bb->node->state_based && rand%2>0){
 					arg[1]=-1;
 				}else{
 					arg[1]=gen_pos_from_record(r,0);
 				}
 				//select position
 
-//				if(target_bb->state_based){//share position
+//				if(target_bb->node->state_based){//share position
 //					arg[1]=gen_pos_from_record_list(0);
 //				}else{
 //					arg[1]=gen_pos_from_record(r,0);
@@ -6910,6 +6864,7 @@ random:
 	}else{
 		monitor_mut++;
 	}
+	return 0;
 }
 
 
@@ -8133,6 +8088,7 @@ havoc_stage:
 	  init_mutation_score();
   	  mutation_score_initialized=1;
   }
+
   cleanup_mutation_record();
   if (cycles_wo_finds >=threshold_cycles_wo_finds){//in this case we take small steps
 	  /*if(!mut_prior_mode&&t1==0){
@@ -8175,8 +8131,8 @@ havoc_stage:
       u32 arg[2];//to store opcode and pos
       //if(mut_prior_mode){
       if(cycles_wo_finds >=threshold_cycles_wo_finds){
-    	 dispatch_random(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0),temp_len,arg);
-    	 if(linear_search){//only mutate once
+    	 linear_search=dispatch_random(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0),temp_len,arg);
+    	 if(linear_search){
     		 stage_cur=my_stage_max;
     		 i=my_use_stacking;
     	 }
@@ -10326,8 +10282,42 @@ int main(int argc, char** argv) {
         seek_to--;
         queue_cur = queue_cur->next;
       }
+      /* add by yangke start */
+      if(!target_bb){
+      	  target_bb=(Target *)malloc(sizeof(Target));
+      	  target_bb->node=NULL;
+      	  strcpy(target_bb->function,"");
+      	  target_bb->attacking=0;
+      	  map_init(&target_bb->trace2fuzz_pos);
+      }else if(target_bb && target_bb->node)
+      {
+    	  struct queue_entry * queue_cur_bak=queue_cur;
+    	  char key[32];
+		  sprintf(key,"%d",queue_cur->exec_path_len);
+		  void **p=(void **)map_get(&target_bb->trace2fuzz_pos,key);
+		  while(!p && queue_cur->next){
+			  queue_cur=queue_cur->next;
+			  char key[32];
+			  sprintf(key,"%d",queue_cur->exec_path_len);
+			  p=(void **)map_get(&target_bb->trace2fuzz_pos,key);
+		  }
+		  if(!p && !queue_cur->next){
+			  queue_cur         = queue;
+			  sprintf(key,"%d",queue_cur->exec_path_len);
+			  void **p=(void **)map_get(&target_bb->trace2fuzz_pos,key);
+			  while(!p && queue_cur->next){
+				  queue_cur=queue_cur->next;
+				  char key[32];
+				  sprintf(key,"%d",queue_cur->exec_path_len);
+				  p=(void **)map_get(&target_bb->trace2fuzz_pos,key);
+			  }
+		  }
+		  if(!p){
+		  	  queue_cur= queue_cur_bak;
+		  }
+      }
       /* add by yangke start
-	  if(target_bb && target_bb->state_based){
+	  if(target_bb->node && target_bb->node->state_based){
 		  struct queue_entry * queue_cur_bak=queue_cur;
 		  char key[32];
 		  sprintf(key,"%d",queue_cur->exec_path_len);
@@ -10440,6 +10430,7 @@ stop_fuzzing:
   destroy_queue();
   destroy_extras();
   destroy_all_cfg();
+  destroy_target();
   destroy_records();
   ck_free(target_path);
   ck_free(sync_id);
