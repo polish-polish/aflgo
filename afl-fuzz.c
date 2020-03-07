@@ -4122,19 +4122,25 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 				map_set(&trace2strategy, key, s);
 			}
 
-			if(target_bb->node){
+			if(target_bb->node && !target_bb->node->state_based){
 				u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
 				if(0xffffffffffffffff==cur[target_bb->node->rid]){
-				    return 0;
-				}else{//trigger target
+					if(cycles_wo_finds<10){
+						return 0;
+					}else{
+				    	OKF("target rid=%d is a state based target",target_bb->node->rid);
+				    	target_bb->node->state_based=1;
+				    }
+				}else if(target_bb->attacking <3){//trigger target
 					target_bb->attacking+=1;
-					char key[16];
+					char key[32];
 					sprintf(key,"%d",cur_trace_len);
-					if(!map_get(&target_bb->trace2fuzz_pos,key)){
+					//if(!map_get(&target_bb->trace2fuzz_pos,key)){
 						map_set(&target_bb->trace2fuzz_pos,key,0);
-					}else if(!p){
-						FATAL("This should not happen!!!");
-					}
+					//}
+				}else{
+					cycles_wo_finds=0;
+					return 0;
 				}
 			}
 
@@ -10289,21 +10295,12 @@ int main(int argc, char** argv) {
       	  strcpy(target_bb->function,"");
       	  target_bb->attacking=0;
       	  map_init(&target_bb->trace2fuzz_pos);
-      }else if(target_bb && target_bb->node)
-      {
+      }else if(target_bb->node){
     	  struct queue_entry * queue_cur_bak=queue_cur;
-    	  char key[32];
+		  char key[32];
 		  sprintf(key,"%d",queue_cur->exec_path_len);
-		  void **p=(void **)map_get(&target_bb->trace2fuzz_pos,key);
-		  while(!p && queue_cur->next){
-			  queue_cur=queue_cur->next;
-			  char key[32];
-			  sprintf(key,"%d",queue_cur->exec_path_len);
-			  p=(void **)map_get(&target_bb->trace2fuzz_pos,key);
-		  }
-		  if(!p && !queue_cur->next){
-			  queue_cur         = queue;
-			  sprintf(key,"%d",queue_cur->exec_path_len);
+    	  if(!target_bb->node->state_based)
+		  {
 			  void **p=(void **)map_get(&target_bb->trace2fuzz_pos,key);
 			  while(!p && queue_cur->next){
 				  queue_cur=queue_cur->next;
@@ -10311,56 +10308,62 @@ int main(int argc, char** argv) {
 				  sprintf(key,"%d",queue_cur->exec_path_len);
 				  p=(void **)map_get(&target_bb->trace2fuzz_pos,key);
 			  }
-		  }
-		  if(!p){
-		  	  queue_cur= queue_cur_bak;
-		  }
-      }
-      /* add by yangke start
-	  if(target_bb->node && target_bb->node->state_based){
-		  struct queue_entry * queue_cur_bak=queue_cur;
-		  char key[32];
-		  sprintf(key,"%d",queue_cur->exec_path_len);
-		  void **p=map_get(&trace2strategy,key);
-		  if(!p){
-			  goto skip_hit_cnt;
-		  }
-		  int hit_cnt =((Strategy *)*p)->hit_cnt;
-		  while(queue_cur && hit_cnt > avg_hit_cnt  && queue_cur->exec_path_len<max_trace_len && UR(100)<75){
-			  queue_cur=queue_cur->next;
-			  if(!queue_cur) break;
-			  char key[32];
-			  sprintf(key,"%d",queue_cur->exec_path_len);
+			  if(!p && !queue_cur->next){
+				  queue_cur         = queue;
+				  sprintf(key,"%d",queue_cur->exec_path_len);
+				  void **p=(void **)map_get(&target_bb->trace2fuzz_pos,key);
+				  while(!p && queue_cur->next){
+					  queue_cur=queue_cur->next;
+					  char key[32];
+					  sprintf(key,"%d",queue_cur->exec_path_len);
+					  p=(void **)map_get(&target_bb->trace2fuzz_pos,key);
+				  }
+			  }
+			  if(!p){
+				  queue_cur= queue_cur_bak;
+			  }
+		  }/*else{
 			  void **p=map_get(&trace2strategy,key);
 			  if(!p){
 				  goto skip_hit_cnt;
 			  }
-				hit_cnt =((Strategy *)*p)->hit_cnt;
-
-		  }
-		  if(!queue_cur){
-			  queue_cur         = queue;
-			  char key[32];
-			  sprintf(key,"%d",queue_cur->exec_path_len);
-			  int hit_cnt =((Strategy *)*map_get(&trace2strategy,key))->hit_cnt;
+			  int hit_cnt =((Strategy *)*p)->hit_cnt;
 			  while(queue_cur && hit_cnt > avg_hit_cnt  && queue_cur->exec_path_len<max_trace_len && UR(100)<75){
 				  queue_cur=queue_cur->next;
 				  if(!queue_cur) break;
-				  char key[32];
+				  char key[32]
 				  sprintf(key,"%d",queue_cur->exec_path_len);
 				  void **p=map_get(&trace2strategy,key);
 				  if(!p){
 					  goto skip_hit_cnt;
 				  }
-				  hit_cnt =((Strategy *)*p)->hit_cnt;
+					hit_cnt =((Strategy *)*p)->hit_cnt;
+
+			  }
+			  if(!queue_cur){
+				  queue_cur         = queue;
+				  char key[32];
+				  sprintf(key,"%d",queue_cur->exec_path_len);
+				  int hit_cnt =((Strategy *)*map_get(&trace2strategy,key))->hit_cnt;
+				  while(queue_cur && hit_cnt > avg_hit_cnt  && queue_cur->exec_path_len<max_trace_len && UR(100)<75){
+					  queue_cur=queue_cur->next;
+					  if(!queue_cur) break;
+					  char key[32];
+					  sprintf(key,"%d",queue_cur->exec_path_len);
+					  void **p=map_get(&trace2strategy,key);
+					  if(!p){
+						  goto skip_hit_cnt;
+					  }
+					  hit_cnt =((Strategy *)*p)->hit_cnt;
+				  }
+			  }
+			  if(!queue_cur){
+				  queue_cur=queue_cur_bak;
 			  }
 		  }
-		  if(!queue_cur){
-			  queue_cur=queue_cur_bak;
-		  }
-	  }
-skip_hit_cnt:
-	 add by yangke end */
+skip_hit_cnt:*/
+      }
+	 /* add by yangke end */
       show_stats();
 
       if (not_on_tty) {
