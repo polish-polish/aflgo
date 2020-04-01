@@ -287,7 +287,8 @@ struct queue_entry {
 static struct queue_entry *queue,     /* Fuzzing queue (linked list)      */
                           *queue_cur, /* Current offset within the queue  */
                           *queue_top, /* Top of the list                  */
-                          *q_prev100; /* Previous 100 marker              */
+                          *q_prev100, /* Previous 100 marker              */
+						  *q_add;     /* Temporary queue backuped for while linear search */
 
 static struct queue_entry*
   top_rated[MAP_SIZE];                /* Top entries for bitmap bytes     */
@@ -356,6 +357,7 @@ static u32 max_trace_len=0;
 static u32 cur_trace_len=0;
 static double avg_hit_cnt=0.0;
 static u32 trace_classes=0;
+static int backup_cnt=0;
 
 typedef struct BasicBlock{
 	int rid;
@@ -416,6 +418,8 @@ typedef struct Target{
 	Node* node;
 	char function[64];
 	u8 attacking;
+	int born_cycle;
+	int max_len;
 	map_int_t trace2fuzz_pos;
 } Target;
 Target * target_bb;
@@ -918,6 +922,67 @@ static void mark_as_redundant(struct queue_entry* q, u8 state) {
 
 }
 
+/* add by yangke start*/
+static void add_to_backup(u8* fname, u32 len, u8 passed_det) {
+
+  struct queue_entry* q = ck_alloc(sizeof(struct queue_entry));
+
+  q->fname        = fname;
+  q->len          = len;
+  q->depth        = cur_depth + 1;
+  q->passed_det   = passed_det;
+
+  q->distance = cur_distance;
+  q->exec_path_len = cur_trace_len;
+  if(!q_add){
+	  q_add=q;
+	  q->next=NULL;
+  }else{
+	  q->next=q_add->next;
+	  q_add->next=q;
+  }
+}
+static void add_backup_to_queue(struct queue_entry * q) {
+
+  if(cur_trace_len>max_trace_len) {
+	  max_trace_len= cur_trace_len;
+  }
+  if (cur_distance > 0) {
+
+    if (max_distance <= 0) {
+      max_distance = cur_distance;
+      min_distance = cur_distance;
+    }
+    if (cur_distance > max_distance) max_distance = cur_distance;
+    if (cur_distance < min_distance) min_distance = cur_distance;
+
+  }
+
+  if (q->depth > max_depth) max_depth = q->depth;
+
+  if (queue_top) {
+
+    queue_top->next = q;
+    queue_top = q;
+
+  } else q_prev100 = queue = queue_top = q;
+
+  queued_paths++;
+  pending_not_fuzzed++;
+
+  cycles_wo_finds = 0;
+
+  if (!(queued_paths % 100)) {
+
+    q_prev100->next_100 = q;
+    q_prev100 = q;
+
+  }
+
+  last_path_time = get_cur_time();
+
+}
+/* add by yangke end */
 
 /* Append new test case to the queue. */
 
@@ -3669,9 +3734,10 @@ static void loadCFG()
  * area of the covered code.
  */
 
-static void update_margin_bbs()
+static int update_margin_bbs(int len)
 {
 
+	int updated=0;
 	margin_bb_count=0;
 
 	for (int i=0;i<CFGs->cur_size;i++) {
@@ -3762,10 +3828,13 @@ static void update_margin_bbs()
 								}
 								target_bb->node=node;
 								target_bb->attacking=1;
+								target_bb->max_len=len>target_bb->max_len?len:target_bb->max_len;
+								target_bb->born_cycle=queue_cycle;
 								map_deinit(&target_bb->trace2fuzz_pos);
 								map_init(&target_bb->trace2fuzz_pos);
 								map_set(&target_bb->trace2fuzz_pos,key,0);
 								strcpy(target_bb->function,fname);
+								updated=1;
 							}
 
 //							//DEBUG CODE
@@ -3796,6 +3865,7 @@ static void update_margin_bbs()
 			}
 		}
 	}
+	return updated;
 }
 /* add by yangke end */
 static inline char * get_description(int mut_code)
@@ -3960,7 +4030,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
     /* Keep only if there are new bits in the map, add to queue for
        future fuzzing, etc. */
-
+	int backup=0;
     if (!(hnb = has_new_bits(virgin_bits))) {
       if (crash_mode) total_crashes++;
 
@@ -3968,7 +4038,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 	  if (cycles_wo_finds >=threshold_cycles_wo_finds){
 		  if (!cfg_loaded){
 			  loadCFG();
-		      update_margin_bbs();
+		      update_margin_bbs(len);
 		  }
 		  Node * node_list[margin_bb_count];
 		  int cnt=has_new_var_bits(virgin_var_bits,node_list);
@@ -4016,10 +4086,11 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 				   map_set(&trace2strategy, key, ss);
 				   if(target_bb->node && 0xffffffffffffffff!=cur[target_bb->node->rid]){
 						target_bb->attacking+=1;
+						target_bb->max_len=len>target_bb->max_len?len:target_bb->max_len;
 						if(!map_get(&target_bb->trace2fuzz_pos,key)){
 							map_set(&target_bb->trace2fuzz_pos,key,0);
 						}else{
-							FATAL("This should not happen!");
+							//FATAL("This should not happen!");
 						}
 				   }
 			  }
@@ -4109,7 +4180,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
 			if (!cfg_loaded)
 				loadCFG();
-			update_margin_bbs();
+			int updated=update_margin_bbs(len);
 
 			char key[32];
 			sprintf(key,"%d",cur_trace_len);
@@ -4128,20 +4199,48 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 					if(cycles_wo_finds<10){
 						return 0;
 					}else{
-				    	OKF("target rid=%d is a state based target",target_bb->node->rid);
+						if(q_add){
+							while(q_add){
+								add_backup_to_queue(q_add);
+								q_add=q_add->next;
+							}
+						}
+						backup_cnt=0;
+				    	FATAL("target rid=%d is a state based target",target_bb->node->rid);
 				    	target_bb->node->state_based=1;
 				    }
-				}else if(target_bb->attacking <3){//trigger target
-					target_bb->attacking+=1;
-					char key[32];
-					sprintf(key,"%d",cur_trace_len);
-					//if(!map_get(&target_bb->trace2fuzz_pos,key)){
-						map_set(&target_bb->trace2fuzz_pos,key,0);
-					//}
 				}else{
-					cycles_wo_finds=0;
-					return 0;
+					if(target_bb->attacking <3){//trigger target
+						target_bb->attacking+=1;
+						target_bb->max_len=len>target_bb->max_len?len:target_bb->max_len;
+						char key[32];
+						sprintf(key,"%d",cur_trace_len);
+						//if(!map_get(&target_bb->trace2fuzz_pos,key)){
+							map_set(&target_bb->trace2fuzz_pos,key,0);
+						//}
+					}else if(queue_cycle < target_bb->born_cycle+target_bb->max_len * 5){
+						//OKF("attacking=%d",target_bb->attacking);
+						cycles_wo_finds=0;
+						fn = alloc_printf("%s/queue/id:%06u,%s_", out_dir, queued_paths+backup_cnt++,
+						                      describe_op(hnb));
+						add_to_backup(fn, len, 0);
+						fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
+						if (fd < 0) PFATAL("Unable to create '%s'", fn);
+						ck_write(fd, mem, len, fn);
+						close(fd);
+						return 0;
+					}else{
+						if(q_add){
+							while(q_add){
+								add_backup_to_queue(q_add);
+								q_add=q_add->next;
+							}
+						}
+						backup_cnt=0;
+						target_bb->node->state_based=1;
+					}
 				}
+
 			}
 
 
@@ -4180,10 +4279,13 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
 			//t1=t2=t3=0;
 			//cleanup_value_changing_mutation_record();
-			/*if (target_bb->node && target_bb->attacking<=0 && target_bb->node->state_based){
+			if (target_bb->node && target_bb->attacking<=0 && target_bb->node->state_based){
 				cleanup_value_changing_mutation_record();
 				WARNF("clean UP!");
-			}*/
+			}else if (updated){
+				cleanup_value_changing_mutation_record();
+				WARNF("clean UP!");
+			}
 			/*
     		if (!cfg_loaded)
     			loadCFG();
@@ -4196,7 +4298,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 					  mut_prior_mode=1;//OKF("Switch to mut_prior_mode!");
 				}
     		}
-    		update_margin_bbs();//the update must be after has_new_var_bits
+    		update_margin_bbs(len);//the update must be after has_new_var_bits
     		for(int i=0;i<vertex_num;i++)
     		{
     			if(!vertex_index[i].is_margin && vertex_index[i].is_margin_last_check){
@@ -5428,6 +5530,7 @@ static void show_stats(void) {
 static void show_init_stats(void) {
 
   struct queue_entry* q = queue;
+  q_add=NULL;
   u32 min_bits = 0, max_bits = 0;
   u64 min_us = 0, max_us = 0;
   u64 avg_us = 0;
@@ -10292,6 +10395,8 @@ int main(int argc, char** argv) {
       if(!target_bb){
       	  target_bb=(Target *)malloc(sizeof(Target));
       	  target_bb->node=NULL;
+      	  target_bb->born_cycle=-1;
+      	  target_bb->max_len=0;
       	  strcpy(target_bb->function,"");
       	  target_bb->attacking=0;
       	  map_init(&target_bb->trace2fuzz_pos);

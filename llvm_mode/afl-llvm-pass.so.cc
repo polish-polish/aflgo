@@ -1007,7 +1007,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 					bbRecord(cur_loc, BB, bbname_id_pairs);
 				}
 #ifndef YANGKE
-                if (distance >= 0){
+                if (distance >= 0 || AFL_R(4) ){
                 	InstrumentBB(NULL, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
                 }
 
