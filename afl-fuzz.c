@@ -6886,7 +6886,7 @@ static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 				arg[0]=10;
 				arg[1]=*map_get(&target_bb->trace2fuzz_pos,key);
 				map_set(&target_bb->trace2fuzz_pos,key,arg[1]+1);
-				return 1;
+				return 1;//linear search
 			}else if(pos>=len){
 				target_bb->attacking-=1;
 				map_set(&target_bb->trace2fuzz_pos,key,-1);
