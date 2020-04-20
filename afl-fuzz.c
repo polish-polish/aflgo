@@ -340,7 +340,7 @@ static unsigned monitor_win=0;
 static unsigned total_mut_cnt=0;//total mutation opteration times
 static unsigned total_monitored_mut_cnt=0;//we only monitored some of the mutaions
 //so this means times that we current used for mutation proiritization
-#define  INIT_THRESHOLD_CYCLES_WO_FINDS 0//threshold for opening mutation prior mode when startup.
+#define  INIT_THRESHOLD_CYCLES_WO_FINDS 0xffffffff//threshold for opening mutation prior mode when startup.
 #define INIT_MUT_LOOP_BOUND 2 //inital mutation loop bound when searching for good mutation.
 #define MAX_MUT_LOOP_BOUND 4 //max mutation loop bound when searching for good mutation.
 #define DELTA 10;
@@ -358,6 +358,8 @@ static u32 cur_trace_len=0;
 static double avg_hit_cnt=0.0;
 static u32 trace_classes=0;
 static int backup_cnt=0;
+static u8 bakv=0;
+static int ttt=0;
 
 typedef struct BasicBlock{
 	int rid;
@@ -1216,27 +1218,133 @@ static inline void log2file_and_free(char * fn,char *info)
  * Update virgin_var_bits to reflect the finds. Returns 1 for finding the change, and 0 otherwise.
  * This information is for prioritizing mutation positions and operations
  */
+//static u64 remember[121][2];
+static u32 remember[121];
+static int cur_pos=-1;
+//static inline int seen(u64 value1, u64 value2)
+//{
+//	if(cur_pos==-1){
+//		for(int i=0;i<121;i++){
+//			remember[i][0]=0xffffffffffffffff;
+//			remember[i][1]=0xffffffffffffffff;
+//		}
+//		remember[0][0]=value1;
+//		remember[0][1]=value2;
+//		cur_pos=1;
+//		return 0;
+//	}else{
+//		int i=0;
+//		for(i=0;i<cur_pos;i++){
+//			if(remember[i][0]==value1 && remember[i][1]==value2){
+//				return 1;
+//			}
+//		}
+//		remember[i][0]=value1;
+//		remember[i][1]=value2;
+//		cur_pos++;
+//		return 0;
+//	}
+//
+//}
+static inline int seen(u32 value)
+{
+	if(cur_pos==-1){
+		for(int i=0;i<121;i++){
+			remember[i]=0xffffffff;
+		}
+		remember[0]=value;
+		cur_pos=1;
+		return 0;
+	}else{
+		int i=0;
+		for(i=0;i<cur_pos;i++){
+			if(remember[i]==value){
+				return 1;
+			}
+		}
+		remember[i]=value;
+		cur_pos++;
+		return 0;
+	}
+
+}
+static  inline int has_new_var_bits2()
+{
+	int ret=0;
+	//u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
+	u32 cksum = hash32(trace_bits+MAP_SIZE+16, (MAP_SIZE-2)<<3, HASH_CONST);
+	if(!seen(cksum)){
+		//OKF("cksum=%lx",cksum);
+		ret=1;
+	}
+
+	return ret;
+}
+//static int cnnt=0;
+//static  inline int has_new_var_bits2()
+//{
+//	int ret=0;
+//	u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
+//	for(int i=0;i<MAP_SIZE-2;i+=2){
+//		if(!(0xffffffffffffffff==cur[i]&&0xffffffffffffffff==cur[i+1])){
+//			OKF("map[%x],%lld,map[%x],%lld",i,cur[i],i+1,cur[i+1]);
+//
+//		}
+//	}
+//	OKF("=====%d======",cnnt++);
+//	if(cnnt==20) FATAL("HHHH");
+//	return ret;
+//}
+//static  inline int has_new_var_bits2()
+//{
+//	int ret=0;
+//	u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
+//	for(int i=0;i<MAP_SIZE-2;i+=2){
+//		if(!(0xffffffffffffffff==cur[i]&&0xffffffffffffffff==cur[i+1])){
+//			if(!seen(cur[i],cur[i+1])){
+//				OKF("map[%x],%lld,map[%x],%lld",i,cur[i],i+1,cur[i+1]);
+//				ret=1;
+//			}
+//		}
+//	}
+//	return ret;
+//}
 
 #ifdef __x86_64__
   static  inline int has_new_var_bits(u64* virgin_var_map, Node * node_list[]) {
 	int ret = 0;//invalid distance value
-	u64* vir = (u64*) virgin_var_map;
-	u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
-	//OKF("margin_bb_count=%d",margin_bb_count);
-	for (int i=0;i<CFGs->cur_size;i++) {
-		CFG * cfg=(CFG *)CFGs->elements[i];
-		if(!cfg->rid2node) FATAL("CFG of %s() is empty! rid2node=(nil)",cfg->fname);
-		if(!cfg->margin_bbs) FATAL("Margin BB of %s() not initialized! cfg->margin_bbs=(nil)",cfg->fname);
-		Container * margin_bbs = cfg->margin_bbs;
-		for(int j=0;j<margin_bbs->cur_size;j++){
-			Node * node = (Node*)margin_bbs->elements[j];
-			int rid=node->rid;
-			if(unlikely(vir[rid] & (~cur[rid]))){
-				vir[rid]&=cur[rid];
-				node_list[ret++]=node;
+	if(target_bb->attacking){
+		u64* vir = (u64*) virgin_var_map;
+		u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
+		for(int i=0;i<MAP_SIZE;i++){
+//			if(ttt==0x1d1){
+//				FATAL("EEEEEEEE");
+//			}
+			if(0xffffffffffffffff!=cur[i]){
+			//if(ttt==0x1d1){
+				OKF("%d,%llx,pos:%x",i,cur[i],ttt);
+			}
+			if(unlikely(vir[i] & (~cur[i]))){
+				vir[i]&=cur[i];
+				ret=-1;
 			}
 		}
 	}
+//	//OKF("margin_bb_count=%d",margin_bb_count);
+//	for (int i=0;i<CFGs->cur_size;i++) {
+//		CFG * cfg=(CFG *)CFGs->elements[i];
+//		if(!cfg->rid2node) FATAL("CFG of %s() is empty! rid2node=(nil)",cfg->fname);
+//		if(!cfg->margin_bbs) FATAL("Margin BB of %s() not initialized! cfg->margin_bbs=(nil)",cfg->fname);
+//		Container * margin_bbs = cfg->margin_bbs;
+//		for(int j=0;j<margin_bbs->cur_size;j++){
+//			Node * node = (Node*)margin_bbs->elements[j];
+//			int rid=node->rid;
+//			if(unlikely(vir[rid] & (~cur[rid]))){
+//				vir[rid]&=cur[rid];
+//				node_list[ret++]=node;
+//			}
+//		}
+//	}
 	return ret;
   }
 #else
@@ -1477,7 +1585,7 @@ EXP_ST void init_count_class16(void) {
 #ifdef __x86_64__
 
 static inline void classify_counts(u64* mem) {
-
+  return;//add by yangke
   u32 i = MAP_SIZE >> 3;
 
   while (i--) {
@@ -2622,7 +2730,9 @@ static u8 run_target(char** argv, u32 timeout) {
      must prevent any earlier operations from venturing into that
      territory. */
 
-  memset(trace_bits, 0, MAP_SIZE + 16);
+  //memset(trace_bits, 0, MAP_SIZE + 16);
+  memset(trace_bits, 255, MAP_SIZE + 16 + (MAP_SIZE<<3));
+
   MEM_BARRIER();
 
   /* If we're running in "dumb" mode, we can't rely on the fork server
@@ -2908,7 +3018,7 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
   if (dumb_mode != 1 && !no_forkserver && !forksrv_pid)
     init_forkserver(argv);
 
-  if (q->exec_cksum) memcpy(first_trace, trace_bits, MAP_SIZE);
+  if (q->exec_cksum)memcpy(first_trace, trace_bits, MAP_SIZE);
 
   start_us = get_cur_time_us();
 
@@ -4026,292 +4136,24 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
   s32 fd;
   u8  keeping = 0, res;
 
+  int  new_state=0;
+
   if (fault == crash_mode) {
 
     /* Keep only if there are new bits in the map, add to queue for
        future fuzzing, etc. */
-	int backup=0;
+	//OKF("DONE,ttt=%x",ttt);
+    new_state=has_new_var_bits2();
     if (!(hnb = has_new_bits(virgin_bits))) {
-      if (crash_mode) total_crashes++;
-
-      /* add by yangke start */
-	  if (cycles_wo_finds >=threshold_cycles_wo_finds){
-		  if (!cfg_loaded){
-			  loadCFG();
-		      update_margin_bbs(len);
-		  }
-		  Node * node_list[margin_bb_count];
-		  int cnt=has_new_var_bits(virgin_var_bits,node_list);
-		  int rid_list_str_size=margin_bb_count<<6;
-		  char rid_list_str[rid_list_str_size];
-		  char *ptr=rid_list_str;
-		  u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
-		  if (cnt>0){
-			  for(int i=0;i<cnt;i++){
-				  //ptr+=sprintf(ptr,"%p,%d,%llx;",node_list[i], node_list[i]->rid, cur[node_list[i]->rid]);
-				  ptr+=sprintf(ptr,"%d,",node_list[i]->rid);
-				  if(ptr-rid_list_str>=rid_list_str_size){
-					  FATAL("ptr Overflow!:%p",ptr);
-				  }
-			  }
-			  if(!mut_prior_mode){
-				  mut_prior_mode=1;//OKF("Switch to mut_prior_mode!");
-			  }
-			  /* logging */
-			  u8 * log_file_name=alloc_printf("%s/value_affected_branch.txt", out_dir);
-			  u8 * info=alloc_printf("len=%d,affected %d branch:%s,margin_bb_count:%d,%s\n",cur_trace_len,cnt,rid_list_str,margin_bb_count,(char *)mem);
-			  log2file_and_free(log_file_name,info);
-
-			  char key[32];
-			  sprintf(key,"%d",queue_cur->exec_path_len);
-			  void **p=map_get(&trace2strategy, key);
-			  Strategy *s;
-			  if(!p){
-				   /* create strategy */
-				   s=(Strategy *)malloc(sizeof(Strategy));
-				   s->record_list=NULL;
-				   s->hit_cnt=0;
-				   map_init(&s->record_map);
-				   map_set(&trace2strategy, key, s);
-			  }else{
-				  s=(Strategy *)*p;
-			  }
-			  sprintf(key,"%d",cur_trace_len);
-			  if(!map_get(&trace2strategy, key)){
-				   /* create strategy */
-				   Strategy * ss=(Strategy *)malloc(sizeof(Strategy));
-				   ss->record_list=NULL;
-				   ss->hit_cnt=0;
-				   map_init(&ss->record_map);
-				   map_set(&trace2strategy, key, ss);
-				   if(target_bb->node && 0xffffffffffffffff!=cur[target_bb->node->rid]){
-						target_bb->attacking+=1;
-						target_bb->max_len=len>target_bb->max_len?len:target_bb->max_len;
-						if(!map_get(&target_bb->trace2fuzz_pos,key)){
-							map_set(&target_bb->trace2fuzz_pos,key,0);
-						}else{
-							//FATAL("This should not happen!");
-						}
-				   }
-			  }
-
-			  if(target_bb->node && target_bb->attacking<=0 && target_bb->node->state_based){
-
-				  /* record mutations that affects deepest state*/
-				  if(cur_trace_len>=queue_cur->exec_path_len)
-				  {
-					  FATAL("HHHH");
-					  record_value_changing_mutation(node_list,cnt,s);
-				  }
-
-			  }else{
-				  /* record mutations that affects condition forks not completely covered */
-				  record_value_changing_mutation(node_list,cnt,s);
-			  }
-			  //int ret0 = update_hit_cnt();
-			  //if(ret0)
-				//  return 0;
-		  }else{
-			  if (target_bb->node && target_bb->attacking<=0 && !target_bb->node->state_based &&  cycles_wo_finds >=len*10){
-
-				  target_bb->node->state_based=1;
-				  //cleanup_value_changing_mutation_record();
-			  }
-			  /*for(int i=0;i<margin_bb_count;i++)
-			  {
-				  int index=rid2index[margin_bb_rid[i]];
-				  add_to_invlaid_positions(index);
-			  }*/
-			  return 0;
-		  }
-	  }else{
-		  return 0;
-	  }
-
-	  /* add by yangke end */
-	  //return 0;//original AFLGO
+      if(!has_new_var_bits2()){
+	if (crash_mode) total_crashes++;
+	return 0;
+      }
     }
-    /* add by yangke start */
-    else{//new coverage findings
-    	////examin mutations that contribute to this new coverage
-    	if (cycles_wo_finds >=threshold_cycles_wo_finds){
-    		if(target_bb->node && target_bb->attacking<=0 && target_bb->node->state_based){
-				if(cur_trace_len>=queue_cur->exec_path_len){
-					for(int i=0;i<MUT_NUM;i++)
-					{
-						if(one_fuzz_mut_cnt[i]>0){
-							mut_score[i]+=1;//one_fuzz_mut_cnt[i];
-						}
-						//OKF("%02d,%d|%d|[%d]%s",i,mut_score[i],mut_cnt[i],tmp_mut_cnt[i],get_description(i));
-					}
-				}
-			}else{
-				for(int i=0;i<MUT_NUM;i++)
-				{
-					if(one_fuzz_mut_cnt[i]>0){
-						mut_score[i]+=1;//one_fuzz_mut_cnt[i];
-					}
-					//OKF("%02d,%d|%d|[%d]%s",i,mut_score[i],mut_cnt[i],tmp_mut_cnt[i],get_description(i));
-				}
-			}
-    		int randwin=0;
-			if(mut_prior_mode){
-				monitor_win++;
-				stride+=DELTA;
-			}else{
-				//OKF("AFLGo Random defeat Variable Monitor!");
-				random_win++;
-				stride-=DELTA;
-				stride=stride<INITIAL_STRIDE?INITIAL_STRIDE:stride;
-				randwin=1;
-			}
-			//OKF("mon/rand mut_times:%d|%d,%0.2f,win_times,%d|%d",monitor_mut,random_mut,(float)monitor_mut/(float)random_mut,monitor_win,random_win);
-			/*if (mut_prior_mode){
-				//OKF("Switch back to AFLGO normal mode!");
-				mut_prior_mode=0;
-			}*/
-			if(randwin){
-				threshold_cycles_wo_finds+=INIT_THRESHOLD_CYCLES_WO_FINDS;//bonus
-			}else{
-				threshold_cycles_wo_finds=INIT_THRESHOLD_CYCLES_WO_FINDS;
-			}
-			max_mut_loop_bound=INIT_MUT_LOOP_BOUND;
-
-
-			if (!cfg_loaded)
-				loadCFG();
-			int updated=update_margin_bbs(len);
-
-			char key[32];
-			sprintf(key,"%d",cur_trace_len);
-			void **p= map_get(&trace2strategy,key);
-			if(!p){
-				Strategy * s=(Strategy *)malloc(sizeof(Strategy));
-				s->record_list=NULL;
-				s->hit_cnt=0;
-				map_init(&s->record_map);
-				map_set(&trace2strategy, key, s);
-			}
-
-			if(target_bb->node && !target_bb->node->state_based){
-				u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
-				if(0xffffffffffffffff==cur[target_bb->node->rid]){
-					if(cycles_wo_finds<10){
-						return 0;
-					}else{
-						if(q_add){
-							while(q_add){
-								add_backup_to_queue(q_add);
-								q_add=q_add->next;
-							}
-						}
-						backup_cnt=0;
-				    	FATAL("target rid=%d is a state based target",target_bb->node->rid);
-				    	target_bb->node->state_based=1;
-				    }
-				}else{
-					if(target_bb->attacking <3){//trigger target
-						target_bb->attacking+=1;
-						target_bb->max_len=len>target_bb->max_len?len:target_bb->max_len;
-						char key[32];
-						sprintf(key,"%d",cur_trace_len);
-						//if(!map_get(&target_bb->trace2fuzz_pos,key)){
-							map_set(&target_bb->trace2fuzz_pos,key,0);
-						//}
-					}else if(queue_cycle < target_bb->born_cycle+target_bb->max_len * 5){
-						//OKF("attacking=%d",target_bb->attacking);
-						cycles_wo_finds=0;
-						fn = alloc_printf("%s/queue/id:%06u,%s_", out_dir, queued_paths+backup_cnt++,
-						                      describe_op(hnb));
-						add_to_backup(fn, len, 0);
-						fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
-						if (fd < 0) PFATAL("Unable to create '%s'", fn);
-						ck_write(fd, mem, len, fn);
-						close(fd);
-						return 0;
-					}else{
-						if(q_add){
-							while(q_add){
-								add_backup_to_queue(q_add);
-								q_add=q_add->next;
-							}
-						}
-						backup_cnt=0;
-						target_bb->node->state_based=1;
-					}
-				}
-
-			}
-
-
-			/*if(cur_trace_len > max_trace_len){
-				cleanup_scc_indicator_value();
-			}*/
-/*
-			  int ridlist[margin_bb_count];
-			  int cnt=has_new_var_bits(virgin_var_bits,ridlist);
-			  char index_list_str[MAX_MUT_POS/4];
-			  char *ptr=index_list_str;
-			  for(int i=0;i<cnt;i++){
-				  //int index=rid2index[ridlist[i]];
-				  //int l=sprintf(ptr,"(%d,%s),",ridlist[i],vertex_index[index].bbname);
-				  ptr+=sprintf(ptr,"%d,",ridlist[i]);
-				  if(ptr-index_list_str>=MAX_MUT_POS/4){
-					  FATAL("ptr Overflow!:%p",ptr);
-				  }
-				  //record_value_changing_mutation(index,1);//muts recognized in this place has lower quality=1
-			  }
-
-			  if (cnt>0){
-				  WARNF("%d affected branch:%s\n",cnt,index_list_str);
-				  record_value_changing_mutation2(-1,1);
-//				  if(!mut_prior_mode){
-//				  					  mut_prior_mode=1;//OKF("Switch to mut_prior_mode!");
-//				  				  }
-
-//				  u8 * log_file_name=alloc_printf("%s/new_path_affected_branch.txt", out_dir);
-//				u8 * info=alloc_printf("%d affected branch:%s,margin_bb_count:%d\n",cnt,index_list_str,margin_bb_count);
-//				int debug_fd = open(log_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
-//				if (debug_fd < 0) PFATAL("Unable to create '%s'", log_file_name);
-//				ck_write(debug_fd, info, strlen(info), log_file_name);
-//				close(debug_fd);
-			  }*/
-
-			//t1=t2=t3=0;
-			//cleanup_value_changing_mutation_record();
-			if (target_bb->node && target_bb->attacking<=0 && target_bb->node->state_based){
-				cleanup_value_changing_mutation_record();
-				WARNF("clean UP!");
-			}else if (updated){
-				cleanup_value_changing_mutation_record();
-				WARNF("clean UP!");
-			}
-			/*
-    		if (!cfg_loaded)
-    			loadCFG();
-    		int ridlist[margin_bb_count];
-    		int cnt=has_new_var_bits(virgin_var_bits,ridlist);//don't update margin before do this
-    		for(int i=0;i<cnt;i++){
-    			int index=rid2index[ridlist[i]];
-				record_value_changing_mutation(index,2);//muts recognized in this place has higher quality=2
-				if(!mut_prior_mode){
-					  mut_prior_mode=1;//OKF("Switch to mut_prior_mode!");
-				}
-    		}
-    		update_margin_bbs(len);//the update must be after has_new_var_bits
-    		for(int i=0;i<vertex_num;i++)
-    		{
-    			if(!vertex_index[i].is_margin && vertex_index[i].is_margin_last_check){
-    				OKF("Margin: rid=%d, degree=%d solved!",vertex_index[i].rid,vertex_index[i].out_degree);
-    			}
-    		}*/
-    	}
-    }
-    /* add by yangke end */
 #ifndef SIMPLE_FILES
 
-    fn = alloc_printf("%s/queue/id:%06u,%s", out_dir, queued_paths,
-                      describe_op(hnb));
+    fn = alloc_printf("%s/queue/id:%06u,%llu,%f,%s", out_dir, queued_paths,
+    		get_cur_time() - start_time, cur_distance, describe_op(hnb));
 
 #else
 
@@ -4416,13 +4258,13 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
       if (!dumb_mode) {
 
-#ifdef __x86_64__
-        simplify_trace((u64*)trace_bits);
-#else
-        simplify_trace((u32*)trace_bits);
-#endif /* ^__x86_64__ */
+//#ifdef __x86_64__
+//        simplify_trace((u64*)trace_bits);
+//#else
+//        simplify_trace((u32*)trace_bits);
+//#endif /* ^__x86_64__ */
 
-        if (!has_new_bits(virgin_crash)) return keeping;
+        if (!has_new_bits(virgin_crash))return keeping;
 
       }
 
@@ -4430,8 +4272,8 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
 #ifndef SIMPLE_FILES
 
-      fn = alloc_printf("%s/crashes/id:%06llu,sig:%02u,%s", out_dir,
-                        unique_crashes, kill_signal, describe_op(0));
+      fn = alloc_printf("%s/crashes/id:%06llu,%llu,%f,sig:%02u,%s", out_dir,
+                        unique_crashes, get_cur_time() - start_time, cur_distance, kill_signal, describe_op(0));
 
 #else
 
@@ -4442,7 +4284,8 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
       unique_crashes++;
       /* add by yangke start */
-      OKF("First Crash is Achieved! Exit now!");
+      if(unique_crashes==4){
+      OKF("First Crash is Achieved! Exit now!,%d",bakv);
       u8 * statistic_file_name=alloc_printf("%s/statistics", out_dir);
       u8 * info=alloc_printf("mon/rand mut_times:%d|%d,%0.2f,win_times,%d|%d\n",monitor_mut,random_mut,(float)monitor_mut/(float)random_mut,monitor_win,random_win);
       int statistic_file_fd = open(statistic_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
@@ -4468,7 +4311,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 	  ck_free(target_path);
 	  ck_free(sync_id);
       alloc_report();
-      exit(0);
+      exit(0);}
       /* add by yangke end */
 
       last_crash_time = get_cur_time();
@@ -6435,10 +6278,37 @@ static inline void  merge_record(Record* to, Record* from,Strategy *s)
 
 static inline void  record_value_changing_mutation(Node * node_list[],int size,Strategy *s)
 {
+
+	{
+		for(int i=0;i<MUT_NUM;i++)
+		{
+			if(tmp_mut_cnt[i]>0 && i==10)
+			{
+				const char *pos_str;
+				map_iter_t iter = map_iter(&tmp_pos_map[i]);
+				char * pos_list_str=NULL;
+				while ((pos_str = map_next(&tmp_pos_map[i], &iter))) {
+					int pos_cnt=*map_get(&tmp_pos_map[i], pos_str);
+					int hex_pos=atoi(pos_str);
+					OKF("pos:0x%x",hex_pos);
+					if(!pos_list_str){
+						pos_list_str=alloc_printf("%x[%d]",hex_pos,pos_cnt);
+					}else{
+						char *temp_str=pos_list_str;
+						pos_list_str=alloc_printf("%s,%x[%d]",temp_str,hex_pos,pos_cnt);
+						ck_free(temp_str);
+					}
+				}
+				OKF("%d: %s",i,pos_list_str);
+			}
+		}
+	}
+
 	if(size<=0){
 		FATAL("ridlist size must >0, cur:%d",size);
 	}
 	Record * tmp_r=NULL;
+	OKF("##target_bb:%p",node_list[0]);
 	for(int i=0;i<size;i++)
 	{
 		char node_ptr_str[32];
@@ -6534,11 +6404,12 @@ static inline void  record_value_changing_mutation(Node * node_list[],int size,S
 				map_iter_t iter = map_iter(&tmp_pos_map[i]);
 				while ((pos_str = map_next(&tmp_pos_map[i], &iter))) {
 				    int pos_cnt=*map_get(&tmp_pos_map[i], pos_str);
+				    int hex_pos=atoi(pos_str);
 				    if(!pos_list_str){
-				    	pos_list_str=alloc_printf("%s[%d]",pos_str,pos_cnt);
+				    	pos_list_str=alloc_printf("%x[%d]",hex_pos,pos_cnt);
 				    }else{
 				    	char *temp_str=pos_list_str;
-				    	pos_list_str=alloc_printf("%s,%s[%d]",temp_str,pos_str,pos_cnt);
+				    	pos_list_str=alloc_printf("%s,%x[%d]",temp_str,hex_pos,pos_cnt);
 				    	ck_free(temp_str);
 				    }
 					int *cnt=map_get(&r->P, pos_str);
@@ -6552,6 +6423,7 @@ static inline void  record_value_changing_mutation(Node * node_list[],int size,S
 			}
 		}
 		char * info = alloc_printf("record-poslist:%s\n",pos_list_str);
+		OKF("%s",info);
 		if(pos_list_str){
 			ck_free(pos_list_str);
 		}
@@ -6636,11 +6508,13 @@ static inline void  record_value_changing_mutation(Node * node_list[],int size,S
 				map_iter_t iter = map_iter(&tmp_pos_map[i]);
 				while ((pos_str = map_next(&tmp_pos_map[i], &iter))) {
 					int pos_cnt=*map_get(&tmp_pos_map[i], pos_str);
+					int hex_pos=atoi(pos_str);
+					OKF("pos:0x%x",hex_pos);
 					if(!pos_list_str){
-						pos_list_str=alloc_printf("%s[%d]",pos_str,pos_cnt);
+						pos_list_str=alloc_printf("%x[%d]",hex_pos,pos_cnt);
 					}else{
 						char *temp_str=pos_list_str;
-						pos_list_str=alloc_printf("%s,%s[%d]",temp_str,pos_str,pos_cnt);
+						pos_list_str=alloc_printf("%s,%x[%d]",temp_str,hex_pos,pos_cnt);
 						ck_free(temp_str);
 					}
 					map_set(&r->P, pos_str, pos_cnt);
@@ -6843,7 +6717,10 @@ static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 {//still buggy
 	arg[0]=-1;
 	arg[1]=-1;
-
+	if(queue_cur->exec_path_len==0){
+		arg[0]=10;
+		return 1;
+	}
 	if (mut_prior_mode)
 	{
 
@@ -6871,24 +6748,32 @@ static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 		if(!target_bb->node||target_bb->node->state_based){
 			goto monitor;
 		}
+		// note that we must handle the case when queue_cur->exec_path_len==0 before here
+		// to make queue_cur->exec_path_len>0 always satisfied.
 		if(target_bb->attacking>0 && queue_cur->exec_path_len>0){
 			//linear search to attack this branch
 			char key[16];
 			sprintf(key,"%d",queue_cur->exec_path_len);
 			int *p=map_get(&target_bb->trace2fuzz_pos,key);
+
 			int pos;
 			if(!p){
 				goto monitor;
 			}else{
 			   pos=*p;
 			}
-			if(0<pos && pos<len){
+			if(0<=pos && pos<len){
 				arg[0]=10;
 				arg[1]=*map_get(&target_bb->trace2fuzz_pos,key);
+				OKF("Mutate pos:0x%x, trace_len=%s",arg[1],key);
 				map_set(&target_bb->trace2fuzz_pos,key,arg[1]+1);
-				return 1;//linear search
+				return 1;
 			}else if(pos>=len){
 				target_bb->attacking-=1;
+				if(target_bb->attacking==0){
+					linear_search=0;
+					FATAL("finish len=0x%x",len);
+				}
 				map_set(&target_bb->trace2fuzz_pos,key,-1);
 			}
 
@@ -8190,7 +8075,7 @@ havoc_stage:
   /* We essentially just do several thousand runs (depending on perf_score)
      where we take the input file and make random stacked tweaks. */
   /* add by yangke start */
-
+  //stage_max=1;
   s32 my_stage_max=stage_max;
 
   if(mutation_score_initialized==0){
@@ -8217,21 +8102,21 @@ havoc_stage:
 	  //my_stage_max=stage_max;
 	  cleanup_value_changing_mutation_record();
   }*/
-
   /* add by yangke end */
   for (stage_cur = 0; stage_cur < my_stage_max; stage_cur++) {
 
 	//UR is a inline random number generation function, see afl-fuzz.c:406
     u32 use_stacking = 1 << (1 + UR(HAVOC_STACK_POW2));
-
+    //use_stacking=1;
     stage_cur_val = use_stacking;
  
     /* add by yangke start */
     u32 my_use_stacking=use_stacking;
-    if(cycles_wo_finds >=threshold_cycles_wo_finds){//in this case we take small steps
-    	my_use_stacking=use_stacking<max_mut_loop_bound?use_stacking:max_mut_loop_bound;
-    	//OKF("use_stacking=%d,max_mut_loop_bound=%d",use_stacking,max_mut_loop_bound);
-    }
+    //u32 my_use_stacking=1;
+//    if(cycles_wo_finds >=threshold_cycles_wo_finds){//in this case we take small steps
+//    	my_use_stacking=use_stacking<max_mut_loop_bound?use_stacking:max_mut_loop_bound;
+//    	//OKF("use_stacking=%d,max_mut_loop_bound=%d",use_stacking,max_mut_loop_bound);
+//    }
     /* add by yangke end */
 
     for (i = 0; i < my_use_stacking; i++) {
@@ -8239,24 +8124,25 @@ havoc_stage:
       /* add by yangke start */
       u32 arg[2];//to store opcode and pos
       //if(mut_prior_mode){
-      if(cycles_wo_finds >=threshold_cycles_wo_finds){
-    	 linear_search=dispatch_random(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0),temp_len,arg);
-    	 if(linear_search){
-    		 stage_cur=my_stage_max;
-    		 i=my_use_stacking;
-    	 }
-    	 record_mutation(arg[0]);
-      }else{
+//      if(cycles_wo_finds >=threshold_cycles_wo_finds){
+//    	 linear_search=dispatch_random(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0),temp_len,arg);
+//    	 if(linear_search||target_bb->attacking){
+//    		 stage_cur=my_stage_max;
+//    		 i=my_use_stacking;
+//    	 }
+//    	 record_mutation(arg[0]);
+//      }else{
     	 arg[0]=UR(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0));//original AFLGO setting
     	 arg[1]=-1;// be careful when it is used as the initial value is invalid pos -1
-      }
-
+//      }
+      //arg[0]=10;
       /*int arr[3]={8,9,11};
       arg[0]=arr[UR(3)];
       arg[1]=15;// cheat for libturbojpeg jdmarker:659 google-fuzzer-testsuite 12s
       */
       /* add by yangke end */
-      switch (arg[0]) {
+      //switch (arg[0]) {
+      switch (15+UR(2)) {
 
       case 0:
 
@@ -8516,23 +8402,61 @@ havoc_stage:
 
           break;
 
-        case 10:
+        case 10:{
 
           /* Just set a random byte to a random value. Because,
              why not. We use XOR with 1-255 to eliminate the
              possibility of a no-op. */
 
           /* add by yangke start */
-		  if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len)){
+        	//out_buf[0x1d0]=0xff;out_buf[0x1d1]=0xff;out_buf[0x2cb]=0x1;
+//        	u8 xx=UR(len-1);
+//        	arg[1]=0x1d0;
+//        	out_buf[0x1d0]=0xff;out_buf[0x1d1]=UR(256);
+//        	out_buf[UR(len)]=0x1;
+//        	bakv=out_buf[0x2cb];
+//        	        	  for(int i=0x1d0;i<0x2cb+16;i+=16){
+//        	        		  OKF("%x %x %x %x %x %x %x %x",out_buf[i],out_buf[i+1],out_buf[i+2],out_buf[i+3],
+//        	        				  out_buf[i+4],out_buf[i+5],out_buf[i+6],out_buf[i+7]);
+//        	        	  }
+
+          if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len)){
 			  arg[1]=UR_FIX(temp_len);
 		  }
+		  //if(arg[1]==0x1d1)FATAL("Find it");
+          //if(linear_search)arg[1]=0x1d1;
+
 		  if (cycles_wo_finds >=threshold_cycles_wo_finds){
 			  record_possible_value_changing_mutation(10,arg[1]);
 		  }
-          out_buf[arg[1]] ^= 1 + UR(255);
+		  if(queue_cur->exec_path_len==0){//do nothing
+
+		  }/*else if(arg[1]==0x1d1){
+			  //out_buf[0x1d0]=0xff;out_buf[0x1d1]=0xff;out_buf[0x2cb]=0x1;
+			  //FATAL("55555555555");
+			  //out_buf[0x1d0] ^= 1 + UR(255);
+			  out_buf[0x1d0]=UR(255);ttt=out_buf[0x1d0];
+			  out_buf[0x1d1]=UR(255);
+			  //out_buf[0x2cb]=0x1;
+
+		  }*/else{
+			  out_buf[arg[1]] ^= 1 + UR(255);
+		  }
+
+
+//          if(linear_search){
+//          	  out_buf[0x1d0]=0xff;out_buf[0x1d1]=0xff;out_buf[0x2cb]=0x1;
+//			  for(int i=0x1d0;i<0x2cb+16;i+=16){
+//				  OKF("%x %x %x %x %x %x %x %x",out_buf[i],out_buf[i+1],out_buf[i+2],out_buf[i+3],
+//						  out_buf[i+4],out_buf[i+5],out_buf[i+6],out_buf[i+7]);
+//			  }
+//          }
+//          else{
+//        	  out_buf[arg[1]] ^= 1 + UR(255);
+//          }
           /* add by yangke end */
           break;
-
+        }
         case 11 ... 12: {
 
             /* Delete bytes. We're making this a bit more likely
@@ -8828,9 +8752,10 @@ havoc_stage:
 
 retry_splicing:
 
+  //if (0&&!linear_search&&use_splicing && splice_cycle++ < SPLICE_CYCLES &&
   if (use_splicing && splice_cycle++ < SPLICE_CYCLES &&
       queued_paths > 1 && queue_cur->len > 1) {
-
+    //FATAL("NO");
     struct queue_entry* target;
     u32 tid, split_at;
     u8* new_buf;
@@ -10391,84 +10316,84 @@ int main(int argc, char** argv) {
         seek_to--;
         queue_cur = queue_cur->next;
       }
-      /* add by yangke start */
-      if(!target_bb){
-      	  target_bb=(Target *)malloc(sizeof(Target));
-      	  target_bb->node=NULL;
-      	  target_bb->born_cycle=-1;
-      	  target_bb->max_len=0;
-      	  strcpy(target_bb->function,"");
-      	  target_bb->attacking=0;
-      	  map_init(&target_bb->trace2fuzz_pos);
-      }else if(target_bb->node){
-    	  struct queue_entry * queue_cur_bak=queue_cur;
-		  char key[32];
-		  sprintf(key,"%d",queue_cur->exec_path_len);
-    	  if(!target_bb->node->state_based)
-		  {
-			  void **p=(void **)map_get(&target_bb->trace2fuzz_pos,key);
-			  while(!p && queue_cur->next){
-				  queue_cur=queue_cur->next;
-				  char key[32];
-				  sprintf(key,"%d",queue_cur->exec_path_len);
-				  p=(void **)map_get(&target_bb->trace2fuzz_pos,key);
-			  }
-			  if(!p && !queue_cur->next){
-				  queue_cur         = queue;
-				  sprintf(key,"%d",queue_cur->exec_path_len);
-				  void **p=(void **)map_get(&target_bb->trace2fuzz_pos,key);
-				  while(!p && queue_cur->next){
-					  queue_cur=queue_cur->next;
-					  char key[32];
-					  sprintf(key,"%d",queue_cur->exec_path_len);
-					  p=(void **)map_get(&target_bb->trace2fuzz_pos,key);
-				  }
-			  }
-			  if(!p){
-				  queue_cur= queue_cur_bak;
-			  }
-		  }/*else{
-			  void **p=map_get(&trace2strategy,key);
-			  if(!p){
-				  goto skip_hit_cnt;
-			  }
-			  int hit_cnt =((Strategy *)*p)->hit_cnt;
-			  while(queue_cur && hit_cnt > avg_hit_cnt  && queue_cur->exec_path_len<max_trace_len && UR(100)<75){
-				  queue_cur=queue_cur->next;
-				  if(!queue_cur) break;
-				  char key[32]
-				  sprintf(key,"%d",queue_cur->exec_path_len);
-				  void **p=map_get(&trace2strategy,key);
-				  if(!p){
-					  goto skip_hit_cnt;
-				  }
-					hit_cnt =((Strategy *)*p)->hit_cnt;
-
-			  }
-			  if(!queue_cur){
-				  queue_cur         = queue;
-				  char key[32];
-				  sprintf(key,"%d",queue_cur->exec_path_len);
-				  int hit_cnt =((Strategy *)*map_get(&trace2strategy,key))->hit_cnt;
-				  while(queue_cur && hit_cnt > avg_hit_cnt  && queue_cur->exec_path_len<max_trace_len && UR(100)<75){
-					  queue_cur=queue_cur->next;
-					  if(!queue_cur) break;
-					  char key[32];
-					  sprintf(key,"%d",queue_cur->exec_path_len);
-					  void **p=map_get(&trace2strategy,key);
-					  if(!p){
-						  goto skip_hit_cnt;
-					  }
-					  hit_cnt =((Strategy *)*p)->hit_cnt;
-				  }
-			  }
-			  if(!queue_cur){
-				  queue_cur=queue_cur_bak;
-			  }
-		  }
-skip_hit_cnt:*/
-      }
-	 /* add by yangke end */
+//      /* add by yangke start */
+//      if(!target_bb){
+//      	  target_bb=(Target *)malloc(sizeof(Target));
+//      	  target_bb->node=NULL;
+//      	  target_bb->born_cycle=-1;
+//      	  target_bb->max_len=0;
+//      	  strcpy(target_bb->function,"");
+//      	  target_bb->attacking=0;
+//      	  map_init(&target_bb->trace2fuzz_pos);
+//      }else if(target_bb->node){
+//    	  struct queue_entry * queue_cur_bak=queue_cur;
+//		  char key[32];
+//		  sprintf(key,"%d",queue_cur->exec_path_len);
+//    	  if(!target_bb->node->state_based)
+//		  {
+//			  void **p=(void **)map_get(&target_bb->trace2fuzz_pos,key);
+//			  while(!p && queue_cur->next){
+//				  queue_cur=queue_cur->next;
+//				  char key[32];
+//				  sprintf(key,"%d",queue_cur->exec_path_len);
+//				  p=(void **)map_get(&target_bb->trace2fuzz_pos,key);
+//			  }
+//			  if(!p && !queue_cur->next){
+//				  queue_cur         = queue;
+//				  sprintf(key,"%d",queue_cur->exec_path_len);
+//				  void **p=(void **)map_get(&target_bb->trace2fuzz_pos,key);
+//				  while(!p && queue_cur->next){
+//					  queue_cur=queue_cur->next;
+//					  char key[32];
+//					  sprintf(key,"%d",queue_cur->exec_path_len);
+//					  p=(void **)map_get(&target_bb->trace2fuzz_pos,key);
+//				  }
+//			  }
+//			  if(!p){
+//				  queue_cur= queue_cur_bak;
+//			  }
+//		  }/*else{
+//			  void **p=map_get(&trace2strategy,key);
+//			  if(!p){
+//				  goto skip_hit_cnt;
+//			  }
+//			  int hit_cnt =((Strategy *)*p)->hit_cnt;
+//			  while(queue_cur && hit_cnt > avg_hit_cnt  && queue_cur->exec_path_len<max_trace_len && UR(100)<75){
+//				  queue_cur=queue_cur->next;
+//				  if(!queue_cur) break;
+//				  char key[32]
+//				  sprintf(key,"%d",queue_cur->exec_path_len);
+//				  void **p=map_get(&trace2strategy,key);
+//				  if(!p){
+//					  goto skip_hit_cnt;
+//				  }
+//					hit_cnt =((Strategy *)*p)->hit_cnt;
+//
+//			  }
+//			  if(!queue_cur){
+//				  queue_cur         = queue;
+//				  char key[32];
+//				  sprintf(key,"%d",queue_cur->exec_path_len);
+//				  int hit_cnt =((Strategy *)*map_get(&trace2strategy,key))->hit_cnt;
+//				  while(queue_cur && hit_cnt > avg_hit_cnt  && queue_cur->exec_path_len<max_trace_len && UR(100)<75){
+//					  queue_cur=queue_cur->next;
+//					  if(!queue_cur) break;
+//					  char key[32];
+//					  sprintf(key,"%d",queue_cur->exec_path_len);
+//					  void **p=map_get(&trace2strategy,key);
+//					  if(!p){
+//						  goto skip_hit_cnt;
+//					  }
+//					  hit_cnt =((Strategy *)*p)->hit_cnt;
+//				  }
+//			  }
+//			  if(!queue_cur){
+//				  queue_cur=queue_cur_bak;
+//			  }
+//		  }
+//skip_hit_cnt:*/
+//      }
+//	 /* add by yangke end */
       show_stats();
 
       if (not_on_tty) {
