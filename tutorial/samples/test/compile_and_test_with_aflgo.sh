@@ -17,7 +17,7 @@ if [ "$TARGET" == "entry" ] ; then
 elif [ "$TARGET" == "regex" ] ; then
 	TIME=2m
 elif [ "$TARGET" == "maze" ] ; then
-	TIME=5m
+	TIME=1m #shink early as a longer path has a shorter distance
 fi
 
 if [ "$2" != "-" ] ; then
@@ -84,7 +84,12 @@ if [ "$2" != "-" ] ; then
 		#echo "*a.^b\$c"> $DIR_IN/words
 		#valid answer e.g. ".*"
 	elif [ "$TARGET" == "maze" ] ; then
-                echo "wwaassdd"> $DIR_IN/words 
+		echo ""> $DIR_IN/words               
+		#echo "wwaassdd"> $DIR_IN/words 
+		#echo "ssssddddwwaawwddddssssddwww1"> $DIR_IN/words1
+		#echo "ssssddddwwaawwddddsdd1"> $DIR_IN/words2 
+		#echo "sddwddddssssddwww1"> $DIR_IN/words3 
+		#echo "sddwddddsdd1"> $DIR_IN/words4 
 		#good seed: 36s:wwaassdd,6min:ssswwaawwddddssssddwww
 		#valid answer e.g. "ssssddddwwaawwddddssssddwwww" "ssssddddwwaawwddddsddwwdwww" "sddwddddsddwdw" "ssssddddwwaawwddddsddwdw"
 	fi
@@ -92,10 +97,15 @@ if [ "$2" != "-" ] ; then
         
 fi
 
-
+ITER=20
 if [ "$TARGET" == "maze" ] ; then
+for((i=1;i<=$((ITER));i++));  
+do
 #gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -x $SUBJECT/maze.dict -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
-/usr/bin/time -a -o time.txt $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -x $SUBJECT/maze.dict -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
+/usr/bin/time -a -o time.maze.txt $AFLGO/afl-fuzz -S ${TARGET}_$((i))_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -x $SUBJECT/maze.dict -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
+mv $DIR_OUT/${TARGET}_$((i))_result  $DIR_OUT/../
+done
+mv $DIR_OUT/../${TARGET}_*_result  $DIR_OUT/
 else
 #gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
 /usr/bin/time -a -o time.txt $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
