@@ -419,7 +419,7 @@ static int edge_num=0;
 typedef struct Target{
 	Node* node;
 	char function[64];
-	u8 attacking;
+	u8 scanning_tasks;
 	int born_cycle;
 	int max_len;
 	map_int_t trace2fuzz_pos;
@@ -3865,7 +3865,7 @@ static int update_margin_bbs(int len)
 								   map_set(&trace2strategy, key, s);
 								}
 								target_bb->node=node;
-								target_bb->attacking=1;
+								target_bb->scanning_tasks=1;
 								target_bb->max_len=len>target_bb->max_len?len:target_bb->max_len;
 								target_bb->born_cycle=queue_cycle;
 								map_deinit(&target_bb->trace2fuzz_pos);
@@ -4060,6 +4060,32 @@ static void enqueue_backups(){
 	}
 	backup_cnt=0;
 }
+static Strategy * create_strategy(char *key){
+	Strategy *s=(Strategy *)malloc(sizeof(Strategy));
+	s->record_list=NULL;
+	s->hit_cnt=0;
+	map_init(&s->record_map);
+	map_set(&trace2strategy, key, s);//initialize strategy
+	return  s;
+}
+static Strategy * get_strategy(int trace_len){
+	char key[32];
+	sprintf(key,"%d",trace_len);
+	void **p=map_get(&trace2strategy, key);
+	if(!p){
+		return create_strategy(key);
+	}else{
+		return (Strategy *)(*p);
+	}
+}
+static void setup_new_linear_search(int len,int trace_len){
+	char key[32];
+	sprintf(key,"%d",trace_len);
+	target_bb->scanning_tasks+=1;
+	OKF("start linear search,target_bb->scanning_tasks=%d",target_bb->scanning_tasks);
+	target_bb->max_len=len>target_bb->max_len?len:target_bb->max_len;
+	map_set(&target_bb->trace2fuzz_pos,key,0);
+}
 /* add by yangke end */
 
 /* Check if the result of an execve() during routine fuzzing is interesting,
@@ -4081,32 +4107,13 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
       /* add by yangke start */
 	  if (cycles_wo_finds >=threshold_cycles_wo_finds){
+
 		  if (!cfg_loaded){
 			  loadCFG();
-			  update_margin_bbs(len);
+			  int updated=update_margin_bbs(len);
 		  }
 		  if(queue_cur->exec_path_len==0){
-			queue_cur->exec_path_len=cur_trace_len;
-			char key[32];
-			sprintf(key,"%d",queue_cur->exec_path_len);
-			void **p=map_get(&trace2strategy, key);
-			if(!p){
-				Strategy *s=(Strategy *)malloc(sizeof(Strategy));
-				s->record_list=NULL;
-				s->hit_cnt=0;
-				map_init(&s->record_map);
-				map_set(&trace2strategy, key, s);
-				if(!target_bb->node){
-					FATAL("TODO:handle this condition!");
-				}
-				OKF("start linear search,target_bb->attacking=%d",target_bb->attacking);
-				target_bb->max_len=len>target_bb->max_len?len:target_bb->max_len;
-				if(!map_get(&target_bb->trace2fuzz_pos,key)){
-					map_set(&target_bb->trace2fuzz_pos,key,0);
-				}else{
-					FATAL("This should not happen!");
-				}
-			}
+			  queue_cur->exec_path_len=cur_trace_len;
 		  }
 
 		  //if(strcmp(target_bb->node->bbname,"ttgload.c:1710:27"))return 0;
@@ -4114,16 +4121,16 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 		  Node * node_list[margin_bb_count];
 		  int cnt=has_new_var_bits(virgin_var_bits,node_list);
 		  //int cnt=has_new_var_bits2();
-		  int rid_list_str_size=margin_bb_count<<6;
-		  char rid_list_str[rid_list_str_size];
-		  char *ptr=rid_list_str;
-		  u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
 
 		  if(cnt>0){
-//			  node_list[0]=target_bb->node;//newly
-//			  cnt=1;//newly
+			  mut_prior_mode=1;//OKF("Switch to mut_prior_mode!");
+			  //			  node_list[0]=target_bb->node;//newly
+			  //			  cnt=1;//newly
 
 			  //FATAL("Cook from here!");
+			  int rid_list_str_size=margin_bb_count<<6;
+			  char rid_list_str[rid_list_str_size];
+			  char *ptr=rid_list_str;
 			  for(int i=0;i<cnt;i++){
 				  //ptr+=sprintf(ptr,"%p,%d,%llx;",node_list[i], node_list[i]->rid, cur[node_list[i]->rid]);
 				  ptr+=sprintf(ptr,"%d,",node_list[i]->rid);
@@ -4131,76 +4138,32 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 					  FATAL("ptr Overflow!:%p",ptr);
 				  }
 			  }
-			  if(!mut_prior_mode){
-				  mut_prior_mode=1;//OKF("Switch to mut_prior_mode!");
-			  }
 			  /* logging */
 			  u8 * log_file_name=alloc_printf("%s/value_affected_branch.txt", out_dir);
 			  u8 * info=alloc_printf("len=%d,affected %d branch:%s,margin_bb_count:%d,%s\n",cur_trace_len,cnt,rid_list_str,margin_bb_count,(char *)mem);
 			  log2file_and_free(log_file_name,info);
 
-			  char key[32];
-			  sprintf(key,"%d",queue_cur->exec_path_len);
-			  void **p=map_get(&trace2strategy, key);
-			  Strategy *s;
-			  if(!p){
-				   /* create strategy */
-				   s=(Strategy *)malloc(sizeof(Strategy));
-				   s->record_list=NULL;
-				   s->hit_cnt=0;
-				   map_init(&s->record_map);
-				   map_set(&trace2strategy, key, s);
-					OKF("start linear search,target_bb->attacking=%d",target_bb->attacking);
-					target_bb->max_len=len>target_bb->max_len?len:target_bb->max_len;
-					if(!map_get(&target_bb->trace2fuzz_pos,key)){
-						map_set(&target_bb->trace2fuzz_pos,key,0);
-					}else{
-						FATAL("This should not happen!%d",queue_cur->exec_path_len);
-					}
-			  }else{
-				  s=(Strategy *)*p;
+
+			  u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
+			  if(target_bb->node && (0xffffffffffffffff!=cur[target_bb->node->rid])){//trigger target
+				  get_strategy(cur_trace_len);
+				  setup_new_linear_search(len,cur_trace_len);
 			  }
 
-			  sprintf(key,"%d",cur_trace_len);
-			  if(!map_get(&trace2strategy, key)){
-				   /* create strategy */
-				   Strategy * ss=(Strategy *)malloc(sizeof(Strategy));
-				   ss->record_list=NULL;
-				   ss->hit_cnt=0;
-				   map_init(&ss->record_map);
-				   map_set(&trace2strategy, key, ss);
-				   if(target_bb->node && (0xffffffffffffffff!=cur[target_bb->node->rid])){//trigger target
-						target_bb->attacking+=1;
-						OKF("start linear search,target_bb->attacking=%d",target_bb->attacking);
-						target_bb->max_len=len>target_bb->max_len?len:target_bb->max_len;
-						if(!map_get(&target_bb->trace2fuzz_pos,key)){
-							map_set(&target_bb->trace2fuzz_pos,key,0);
-						}else{
-							FATAL("This should not happen!");
-						}
-				   }
-			  }
-
-			  if(target_bb->node && target_bb->attacking<=0 && target_bb->node->state_based){
-
-				  /* record mutations that affects deepest state*/
-				  if(cur_trace_len>=queue_cur->exec_path_len)
-				  {
-					  OKF("Record deeper state mutator!");
-					  record_value_changing_mutation(node_list,cnt,s);
-				  }
-
-			  }else{
-				  /* record mutations that affects condition forks not completely covered */
+			  if(!(target_bb->node && target_bb->node->state_based && cur_trace_len<queue_cur->exec_path_len)){
+				  /* Do not record mutations that trigger shallow states*/
+				  Strategy *s=get_strategy(queue_cur->exec_path_len);
 				  record_value_changing_mutation(node_list,cnt,s);
 			  }
 			  //int ret0 = update_hit_cnt();
 			  //if(ret0)
-			  	  return 0;
+				  return 0;
 		  }else{
-			  if (target_bb->node && target_bb->attacking<=0 && !target_bb->node->state_based &&  cycles_wo_finds >=len*10){
+
+			  if (target_bb->node && target_bb->scanning_tasks<=0 && !target_bb->node->state_based &&  cycles_wo_finds >=len*10){
 
 				  target_bb->node->state_based=1;
+				  OKF("target rid=%d,%s is a state based target",target_bb->node->rid,target_bb->node->bbname);
 				  //cleanup_value_changing_mutation_record();
 			  }
 			  /*for(int i=0;i<margin_bb_count;i++)
@@ -4221,7 +4184,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     else{//new coverage findings
     	////examin mutations that contribute to this new coverage
     	if (cycles_wo_finds >=threshold_cycles_wo_finds){
-    		if(target_bb->node && target_bb->attacking<=0 && target_bb->node->state_based){
+    		if(target_bb->node && target_bb->scanning_tasks<=0 && target_bb->node->state_based){
 				if(cur_trace_len>=queue_cur->exec_path_len){
 					for(int i=0;i<MUT_NUM;i++)
 					{
@@ -4268,24 +4231,15 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 				loadCFG();
 			int updated=update_margin_bbs(len);
 
-			char key[32];
-			sprintf(key,"%d",cur_trace_len);
-			void **p= map_get(&trace2strategy,key);
-			if(!p){
-				Strategy * s=(Strategy *)malloc(sizeof(Strategy));
-				s->record_list=NULL;
-				s->hit_cnt=0;
-				map_init(&s->record_map);
-				map_set(&trace2strategy, key, s);
-			}
+			get_strategy(cur_trace_len);
 
 			if(target_bb->node && !target_bb->node->state_based){
 				u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
 				if(0xffffffffffffffff==cur[target_bb->node->rid]){//miss target
-					if(target_bb->attacking){//Do not report target missing inputs during linear search.
+					if(target_bb->scanning_tasks>0){//Do not report target missing inputs during linear search.
 						return 0;
 					}
-					if(cycles_wo_finds<10){//Give it more time to solve field-based condition .
+					if(cycles_wo_finds<10){//Give it more time to solve field-based condition.
 						return 0;
 					}else{//Time out. This condition must be state-based. Add buffered target reachable inputs to queue.
 						enqueue_backups();
@@ -4293,16 +4247,16 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 				    	target_bb->node->state_based=1;
 				    }
 				}else{//trigger target
-					if(target_bb->attacking <3){
+					if(target_bb->scanning_tasks <3){
 						//One input is enough for solving field based condition.
 						//start linear search
-						target_bb->attacking+=1;
+						target_bb->scanning_tasks+=1;
 						target_bb->max_len=len>target_bb->max_len?len:target_bb->max_len;
 						char key[32];
 						sprintf(key,"%d",cur_trace_len);
 						map_set(&target_bb->trace2fuzz_pos,key,0);
 					}else if(queue_cycle < target_bb->born_cycle+target_bb->max_len * 5){
-						//OKF("attacking=%d",target_bb->attacking);
+						//OKF("target_bb->scanning_tasks=%d",target_bb->scanning_tasks);
 						//For field based condition, different trace may trigger same branch
 						//Give it another 10 cycles for branch solving
 						cycles_wo_finds=0;
@@ -4317,6 +4271,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 					}else{
 						enqueue_backups();
 						target_bb->node->state_based=1;
+						OKF("target rid=%d,%s is a state based target",target_bb->node->rid,target_bb->node->bbname);
 					}
 				}
 
@@ -4358,7 +4313,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
 			//t1=t2=t3=0;
 			//cleanup_value_changing_mutation_record();
-			if (target_bb->node && target_bb->attacking<=0 && target_bb->node->state_based){
+			if (target_bb->node && target_bb->scanning_tasks<=0 && target_bb->node->state_based){
 				cleanup_value_changing_mutation_record();
 				WARNF("clean UP!");
 			}else if (updated){
@@ -6594,7 +6549,7 @@ static inline void  record_value_changing_mutation(Node * node_list[],int size,S
 				}else{
 					temp_distance=node_list[i]->distance;
 				}*//*
-				if(target_bb->node && target_bb->attacking<=0 && target_bb->node->state_based){
+				if(target_bb->node && target_bb->scanning_tasks<=0 && target_bb->node->state_based){
 					//handle the loop out indicator
 					char ptr_str[32];
 					sprintf(ptr_str,"%p",node_list[i]);
@@ -6699,7 +6654,7 @@ static inline void  record_value_changing_mutation(Node * node_list[],int size,S
 			}else{
 				temp_distance=node_list[i]->distance;
 			}*//*
-			if(target_bb->node && target_bb->attacking<=0 && target_bb->node->state_based){
+			if(target_bb->node && target_bb->scanning_tasks<=0 && target_bb->node->state_based){
 				char ptr_str[32];
 				sprintf(ptr_str,"%p",node_list[i]);
 				void **p=map_get(&scc_indicators,ptr_str);
@@ -6953,23 +6908,12 @@ static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 {//still buggy
 	arg[0]=-1;
 	arg[1]=-1;
-	if (mut_prior_mode)
+
+	if (mut_prior_mode||target_bb->scanning_tasks>0)
 	{
 
 		/* find suitable template strategy */
-		char exec_path_len_str[32]={'\0'};
-		sprintf(exec_path_len_str,"%d",queue_cur->exec_path_len);
-		void **p=map_get(&trace2strategy,exec_path_len_str);
-		Strategy *s;
-		if(!p){
-			s=(Strategy *) malloc(sizeof(Strategy));
-			s->record_list=NULL;
-			s->hit_cnt=0;
-			map_init(&s->record_map);
-			map_set(&trace2strategy,exec_path_len_str,s);
-		}else{
-			s=(Strategy *)*p;
-		}
+		Strategy *s = get_strategy(queue_cur->exec_path_len);
 		//check if there exists an margin BB with distance==min_d(minimal distance of current margin BB set)
 		//and we do not have corresponding variable impacting records.
 		//if so we linearly search for good position
@@ -6982,7 +6926,10 @@ static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 		}
 		// note that we must handle the case when queue_cur->exec_path_len==0 before here
 		// to make queue_cur->exec_path_len>0 always satisfied.
-		if(target_bb->attacking>0 && queue_cur->exec_path_len>0){
+		if(queue_cur->exec_path_len<=0){
+			FATAL("queue_cur->exec_path_len:%d<=0",queue_cur->exec_path_len);
+		}
+		if(target_bb->scanning_tasks>0){
 			//linear search to attack this branch
 			char key[16];
 			sprintf(key,"%d",queue_cur->exec_path_len);
@@ -6997,14 +6944,12 @@ static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 			if(0<=pos && pos<len){
 				arg[0]=10;
 				arg[1]=*map_get(&target_bb->trace2fuzz_pos,key);
-				OKF("Mutate pos:0x%x, trace_len=%s",arg[1],key);
 				map_set(&target_bb->trace2fuzz_pos,key,arg[1]+1);
 				return 1;
 			}else if(pos>=len){
-				target_bb->attacking-=1;
-				if(target_bb->attacking==0){
-					linear_search=0;
-					//FATAL("finish len=0x%x",len);
+				target_bb->scanning_tasks-=1;
+				if(target_bb->scanning_tasks){
+					OKF("finish linear search! len=%d",len);
 				}
 				map_set(&target_bb->trace2fuzz_pos,key,-1);
 			}
@@ -8362,7 +8307,7 @@ havoc_stage:
     	 }else{
     	     linear_search=dispatch_random(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0),temp_len,arg);
     	 }
-    	 if(linear_search||target_bb->attacking){
+    	 if(linear_search||target_bb->scanning_tasks){
     		 stage_cur=my_stage_max;
     		 i=my_use_stacking;
     	 }
@@ -10557,7 +10502,7 @@ int main(int argc, char** argv) {
       	  target_bb->born_cycle=-1;
       	  target_bb->max_len=0;
       	  strcpy(target_bb->function,"");
-      	  target_bb->attacking=0;
+      	  target_bb->scanning_tasks=0;
       	  map_init(&target_bb->trace2fuzz_pos);
       }else if(target_bb->node){
     	  struct queue_entry * queue_cur_bak=queue_cur;
