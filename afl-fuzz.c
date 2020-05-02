@@ -287,8 +287,7 @@ struct queue_entry {
 static struct queue_entry *queue,     /* Fuzzing queue (linked list)      */
                           *queue_cur, /* Current offset within the queue  */
                           *queue_top, /* Top of the list                  */
-                          *q_prev100, /* Previous 100 marker              */
-						  *q_add;     /* Temporary queue backuped for while linear search */
+                          *q_prev100; /* Previous 100 marker              */
 
 static struct queue_entry*
   top_rated[MAP_SIZE];                /* Top entries for bitmap bytes     */
@@ -357,9 +356,12 @@ static u32 max_trace_len=0;
 static u32 cur_trace_len=0;
 static double avg_hit_cnt=0.0;
 static u32 trace_classes=0;
-static int backup_cnt=0;
-static u8 bakv=0;
-static int ttt=0;
+
+enum {
+  /* 00 */ FIELD_BASED,                      /* Field-based condition           */
+  /* 01 */ STATE_BASED,                      /* State-based condition           */
+  /* 02 */ UNKNOWN,                          /* Currently Unknown               */
+};
 
 typedef struct BasicBlock{
 	int rid;
@@ -370,7 +372,8 @@ typedef struct BasicBlock{
 	u8 is_margin;//yes:1,no:0
 	u8 is_margin_last_check;
 	u16 margin_history;
-	u8 state_based;
+	u8 branch_type;
+	char * answer_str;
 	map_int_t * successors;
 	map_int_t * invalid_positions;
 	//char nid[32];
@@ -378,9 +381,9 @@ typedef struct BasicBlock{
 } Node;
 
 typedef struct record{
-	hashset_t B;
-	int  M[17];
-	map_int_t P;
+	hashset_t B;//margin branches that is affected
+	int  M[17];//effective mutation list
+	map_int_t P;//effective fuzzing position
 	double distance;
 	struct record * next;
 } Record;
@@ -416,20 +419,52 @@ static map_void_t trace2strategy;
 static int cfg_loaded=0;
 static int vertex_num=0;
 static int edge_num=0;
+
+typedef struct LinkedInteger{
+	u64 v;
+	struct LinkedInteger * next
+} LinkedInteger;
+typedef struct LinkListInteger{
+	int len;
+	struct LinkedInteger * head;
+} LinkListInteger;
+typedef struct LinkedPosition{
+	int pos;
+	u8 *answer;
+	int fuzz_cnt;
+	LinkListInteger value_list;
+	struct LinkedPosition * next;
+} LinkedPosition;
+typedef struct LinkListPosition{
+	int len;
+	struct LinkedPosition * head;
+}LinkListPosition;
+typedef struct Candidate{
+	int fuzz_pos;
+	u64 base_value;
+	LinkedPosition * pos_focus;
+	LinkListPosition eff_pos_list;
+	struct queue_entry * entry;
+	struct Candidate *next;
+} Candidate;
 typedef struct Target{
 	Node* node;
 	char function[64];
-	u8 scanning_tasks;
+	u8 type_detecting;
+	int scanning_tasks;
 	int born_cycle;
 	int max_len;
-	map_int_t trace2fuzz_pos;
+	LinkListInteger value_list;
+	int c_list_len;
+	Candidate * c_list;
+	Candidate * c_focus;
 } Target;
-Target * target_bb;
+Target * target_bb=NULL;
 u8 linear_search=0;
 
 static u32 trace_len(u8* mem);
 static inline void record_value_changing_mutation(Node * node_list[],int size,Strategy * s);
-//static inline void add_to_invlaid_positions(int index);
+
 static inline void cleanup_value_changing_mutation_record();
 
 /* add by yangke end */
@@ -924,67 +959,6 @@ static void mark_as_redundant(struct queue_entry* q, u8 state) {
 
 }
 
-/* add by yangke start*/
-static void add_to_backup(u8* fname, u32 len, u8 passed_det) {
-
-  struct queue_entry* q = ck_alloc(sizeof(struct queue_entry));
-
-  q->fname        = fname;
-  q->len          = len;
-  q->depth        = cur_depth + 1;
-  q->passed_det   = passed_det;
-
-  q->distance = cur_distance;
-  q->exec_path_len = cur_trace_len;
-  if(!q_add){
-	  q_add=q;
-	  q->next=NULL;
-  }else{
-	  q->next=q_add->next;
-	  q_add->next=q;
-  }
-}
-static void add_backup_to_queue(struct queue_entry * q) {
-
-  if(cur_trace_len>max_trace_len) {
-	  max_trace_len= cur_trace_len;
-  }
-  if (cur_distance > 0) {
-
-    if (max_distance <= 0) {
-      max_distance = cur_distance;
-      min_distance = cur_distance;
-    }
-    if (cur_distance > max_distance) max_distance = cur_distance;
-    if (cur_distance < min_distance) min_distance = cur_distance;
-
-  }
-
-  if (q->depth > max_depth) max_depth = q->depth;
-
-  if (queue_top) {
-
-    queue_top->next = q;
-    queue_top = q;
-
-  } else q_prev100 = queue = queue_top = q;
-
-  queued_paths++;
-  pending_not_fuzzed++;
-
-  cycles_wo_finds = 0;
-
-  if (!(queued_paths % 100)) {
-
-    q_prev100->next_100 = q;
-    q_prev100 = q;
-
-  }
-
-  last_path_time = get_cur_time();
-
-}
-/* add by yangke end */
 
 /* Append new test case to the queue. */
 
@@ -998,10 +972,12 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
   q->passed_det   = passed_det;
 
   q->distance = cur_distance;
+  /* add by yangke start */
   q->exec_path_len = cur_trace_len;
   if(cur_trace_len>max_trace_len) {
 	  max_trace_len= cur_trace_len;
   }
+  /* add by yangke end */
   if (cur_distance > 0) {
 
     if (max_distance <= 0) {
@@ -3559,8 +3535,11 @@ static inline void destroy_container(Container * c){
 	c->cur_size=0;
 	c->max_size=0;
 }
+static inline void remove_candidates();
+static inline void remove_values();
 static inline void destroy_target(){
-	map_deinit(&target_bb->trace2fuzz_pos);
+	remove_candidates();
+	remove_values(&target_bb->value_list);
 	free(target_bb);
 }
 
@@ -3586,6 +3565,7 @@ void destroy_all_cfg()
 				free(node->invalid_positions);
 				node->invalid_positions=NULL;
 	    	}
+	    	if(node->answer_str)free(node->answer_str);
 	    	free(node);
 	    	node=NULL;
 	    }
@@ -3604,14 +3584,42 @@ void destroy_all_cfg()
 
 static CFG * loadFuncCFG(char * fname) {
 	OKF("Load CFG for %s",fname);
-	/*1. init vetex_index */
-	u8 *fn = alloc_printf("%s/index/%s.node_index.txt",temp_dir, fname);
 
+	/*pre step: load answers */
+	map_void_t bb_branch_info;
+	map_init(&bb_branch_info);
 	FILE * f;
+	u8 * fn = alloc_printf("%s/bb_branch_info/%s.bb_branch_info.txt", temp_dir, fname);
 	if (!(f = fopen(fn, "r"))) {
 		ck_free(fn);
 		FATAL("No such file or directory: %s",fn);
+	}
+	u8 tmp[MAX_LINE];
+	while (fgets(tmp, MAX_LINE, f)) {
+		if(0==strcmp(tmp,""))continue;
+		strtok(tmp,"|");//char * incr_id=strtok(tmp,"|");
+		char * answer_str=strdup(strtok(NULL,"|"));//strdup is required as the string will be recycle
+		char * key=strtok(NULL,"|");
+		map_set(&bb_branch_info,key,answer_str);//
+		OKF("%s->%s",key,answer_str);
+	}
+	map_iter_t iter = map_iter(&bb_branch_info);
+	const char *kk;
+	while ((kk = map_next(&bb_branch_info, &iter)))
+	{
+		char * v=(char *)*map_get(&bb_branch_info, kk);
+		OKF("%s->%s",kk,v);
 
+	}
+	ck_free(fn);
+	fclose(f);
+
+	/*1. init vetex_index */
+	fn = alloc_printf("%s/index/%s.node_index.txt",temp_dir, fname);
+
+	if (!(f = fopen(fn, "r"))) {
+		ck_free(fn);
+		FATAL("No such file or directory: %s",fn);
 	}
 	CFG * cfg=(CFG *)malloc(sizeof(CFG));
 	cfg->fname=alloc_printf("%s",fname);
@@ -3622,13 +3630,18 @@ static CFG * loadFuncCFG(char * fname) {
 	vertex_num=0;
 
 	map_init(cfg->rid2node);
-    u8 tmp[MAX_LINE];
 	while (fgets(tmp, MAX_LINE, f)) {
 		char *rid_str=strtok(tmp,"|");
 		int rid=atoi(rid_str);
-		strtok(NULL,"|");
-		//char * nid=strtok(NULL,"|");
+		strtok(NULL,"|");//char * nid=strtok(NULL,"|");
 		char * key_str=strtok(NULL,"|");
+
+		char *answer_str=NULL;
+		void **p=map_get(&bb_branch_info,key_str);
+		if(p){
+			answer_str=strdup((char*)*p);
+			FATAL("%s %s->%s",fname,key_str,(char*)*p);
+		}
 		Node * node=(Node *)malloc(sizeof(Node));
 		char * bbname=strtok(key_str,";");
 		if (strlen(bbname)==0)
@@ -3644,10 +3657,14 @@ static CFG * loadFuncCFG(char * fname) {
 		node->is_margin=0;
 		node->is_margin_last_check=0;
 		node->margin_history=0;
-		node->state_based=0;
+		node->branch_type=UNKNOWN;
 		node->successors=NULL;
 		node->invalid_positions=NULL;
-		map_set(cfg->rid2node, rid_str, node);/*
+		map_set(cfg->rid2node, rid_str, node);
+		node->answer_str=answer_str;
+
+
+		/*
 		void **p=map_get(global_rid2node, rid_str);
 		if(!p){
 			map_set(global_rid2node, rid_str, node);
@@ -3670,6 +3687,9 @@ static CFG * loadFuncCFG(char * fname) {
 	}
 	ck_free(fn);
 	fclose(f);
+
+	map_deinit(&bb_branch_info);//deinit bb_branch_info
+
 
     /*2. init out_edge_index */
 	fn = alloc_printf("%s/index/%s.out_edge_index.txt", temp_dir, fname);
@@ -3864,13 +3884,12 @@ static int update_margin_bbs(int len)
 								   map_init(&s->record_map);
 								   map_set(&trace2strategy, key, s);
 								}
+								remove_candidates();
+								remove_values(&target_bb->value_list);
 								target_bb->node=node;
 								target_bb->scanning_tasks=1;
 								target_bb->max_len=len>target_bb->max_len?len:target_bb->max_len;
 								target_bb->born_cycle=queue_cycle;
-								map_deinit(&target_bb->trace2fuzz_pos);
-								map_init(&target_bb->trace2fuzz_pos);
-								map_set(&target_bb->trace2fuzz_pos,key,0);
 								strcpy(target_bb->function,fname);
 								updated=1;
 							}
@@ -4051,15 +4070,7 @@ static inline u8 update_hit_cnt()
 	log2file_and_free(log_file_name,info);
 	return ret;
 }
-static void enqueue_backups(){
-	if(q_add){
-		while(q_add){
-			add_backup_to_queue(q_add);
-			q_add=q_add->next;
-		}
-	}
-	backup_cnt=0;
-}
+
 static Strategy * create_strategy(char *key){
 	Strategy *s=(Strategy *)malloc(sizeof(Strategy));
 	s->record_list=NULL;
@@ -4079,13 +4090,113 @@ static Strategy * get_strategy(int trace_len){
 	}
 }
 static void setup_new_linear_search(int len,int trace_len){
-	char key[32];
-	sprintf(key,"%d",trace_len);
 	target_bb->scanning_tasks+=1;
 	OKF("start linear search,target_bb->scanning_tasks=%d",target_bb->scanning_tasks);
 	target_bb->max_len=len>target_bb->max_len?len:target_bb->max_len;
-	map_set(&target_bb->trace2fuzz_pos,key,0);
 }
+static void add_position(LinkListPosition * pos_list,int pos){
+	LinkedPosition * p=(LinkedPosition *)malloc(sizeof(LinkedPosition));
+	p->pos=pos;
+	p->answer=NULL;
+	p->fuzz_cnt=0;
+	p->value_list.head=NULL;
+	p->value_list.len=0;
+	p->next=pos_list->head;
+	pos_list->head=p;
+	pos_list->len++;
+}
+
+
+static void add_candidate(struct queue_entry * entry, u64 v){
+	Candidate * c=(Candidate *)malloc(sizeof(Candidate));
+	c->entry=entry;
+	c->fuzz_pos=0;
+	c->base_value=v;
+	c->pos_focus=NULL;
+	c->eff_pos_list.head=NULL;
+	c->eff_pos_list.len=0;
+	c->next=NULL;
+	if(!target_bb->c_list){
+	  target_bb->c_list=c;
+	  c->next=NULL;
+	}else{
+	  c->next=target_bb->c_list;
+	  target_bb->c_list=c;
+	}
+	//note that target_bb->c_focus is not set yet!
+	target_bb->c_focus=c;
+	target_bb->c_list_len++;
+	if(target_bb->c_list_len>1){
+		FATAL("Assert c_list_len<=1 failed!");
+	}
+}
+static inline void remove_values(LinkListInteger * v_list){
+	LinkedInteger * i;
+    while(v_list->head){
+    	i=v_list->head;
+    	v_list->head=v_list->head->next;
+    	free(i);
+    }
+    v_list->len=0;
+}
+static inline void display_value_list(LinkedPosition * p){
+	if(!p)return;
+	LinkedInteger *i=p->value_list.head;
+	char * s=NULL;
+	while(i){
+		if(!s){
+			s=alloc_printf("%llx",i->v);
+		}else{
+			char* t=alloc_printf("%s,%llx",s,i->v);
+			ck_free(s);
+			s=t;
+		}
+		i=i->next;
+	}
+	OKF("[%d]:[%s]",p->pos,s);
+	ck_free(s);
+}
+static void remove_positions(LinkListPosition * pos_list){
+	LinkedPosition * p;
+	while(pos_list->head){
+		p=pos_list->head;
+		pos_list->head=pos_list->head->next;
+		remove_values(&p->value_list);
+		if(p->answer){
+			free(p->answer);
+		}
+		free(p);
+	}
+}
+static inline void remove_candidates(){
+	Candidate * c;
+	while(target_bb->c_list){
+		c=target_bb->c_list;
+		target_bb->c_list=target_bb->c_list->next;
+		c->pos_focus=NULL;
+		remove_positions(&c->eff_pos_list);
+		free(c);
+	}
+	target_bb->c_list_len=0;
+	target_bb->c_focus=NULL;
+}
+
+
+
+static inline int unseen(LinkListInteger *v_list, u64 v){
+	for(LinkedInteger * i=v_list->head;i!=NULL;i=i->next){
+		if(i->v==v){
+			return 0;
+		}
+	}
+	LinkedInteger * new_v =(LinkedInteger *)malloc(sizeof(LinkedInteger));
+	new_v->v=v;
+	new_v->next=v_list->head;
+	v_list->head=new_v;
+	v_list->len++;
+	return 1;
+}
+
 /* add by yangke end */
 
 /* Check if the result of an execve() during routine fuzzing is interesting,
@@ -4097,249 +4208,114 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
   u8  hnb;
   s32 fd;
   u8  keeping = 0, res;
-
+  u8  add_it=0;
+  u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
+  OKF("####");
   if (fault == crash_mode) {
 
     /* Keep only if there are new bits in the map, add to queue for
        future fuzzing, etc. */
-    if (!(hnb = has_new_bits(virgin_bits))) {
-      if (crash_mode) total_crashes++;
-
-      /* add by yangke start */
-	  if (cycles_wo_finds >=threshold_cycles_wo_finds){
-
-		  if (!cfg_loaded){
-			  loadCFG();
-			  int updated=update_margin_bbs(len);
-		  }
-		  if(queue_cur->exec_path_len==0){
-			  queue_cur->exec_path_len=cur_trace_len;
-		  }
-
-		  //if(strcmp(target_bb->node->bbname,"ttgload.c:1710:27"))return 0;
-
-		  Node * node_list[margin_bb_count];
-		  int cnt=has_new_var_bits(virgin_var_bits,node_list);
-		  //int cnt=has_new_var_bits2();
-
-		  if(cnt>0){
-			  mut_prior_mode=1;//OKF("Switch to mut_prior_mode!");
-			  //			  node_list[0]=target_bb->node;//newly
-			  //			  cnt=1;//newly
-
-			  //FATAL("Cook from here!");
-			  int rid_list_str_size=margin_bb_count<<6;
-			  char rid_list_str[rid_list_str_size];
-			  char *ptr=rid_list_str;
-			  for(int i=0;i<cnt;i++){
-				  //ptr+=sprintf(ptr,"%p,%d,%llx;",node_list[i], node_list[i]->rid, cur[node_list[i]->rid]);
-				  ptr+=sprintf(ptr,"%d,",node_list[i]->rid);
-				  if(ptr-rid_list_str>=rid_list_str_size){
-					  FATAL("ptr Overflow!:%p",ptr);
-				  }
-			  }
-			  /* logging */
-			  u8 * log_file_name=alloc_printf("%s/value_affected_branch.txt", out_dir);
-			  u8 * info=alloc_printf("len=%d,affected %d branch:%s,margin_bb_count:%d,%s\n",cur_trace_len,cnt,rid_list_str,margin_bb_count,(char *)mem);
-			  log2file_and_free(log_file_name,info);
-
-
-			  u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
-			  if(target_bb->node && (0xffffffffffffffff!=cur[target_bb->node->rid])){//trigger target
-				  get_strategy(cur_trace_len);
-				  setup_new_linear_search(len,cur_trace_len);
-			  }
-
-			  if(!(target_bb->node && target_bb->node->state_based && cur_trace_len<queue_cur->exec_path_len)){
-				  /* Do not record mutations that trigger shallow states*/
-				  Strategy *s=get_strategy(queue_cur->exec_path_len);
-				  record_value_changing_mutation(node_list,cnt,s);
-			  }
-			  //int ret0 = update_hit_cnt();
-			  //if(ret0)
-				  return 0;
-		  }else{
-
-			  if (target_bb->node && target_bb->scanning_tasks<=0 && !target_bb->node->state_based &&  cycles_wo_finds >=len*10){
-
-				  target_bb->node->state_based=1;
-				  OKF("target rid=%d,%s is a state based target",target_bb->node->rid,target_bb->node->bbname);
-				  //cleanup_value_changing_mutation_record();
-			  }
-			  /*for(int i=0;i<margin_bb_count;i++)
-			  {
-				  int index=rid2index[margin_bb_rid[i]];
-				  add_to_invlaid_positions(index);
-			  }*/
-			  return 0;
-		  }
-	  }else{
-		  return 0;
-	  }
-
-	  /* add by yangke end */
-	  //return 0;//original AFLGO
-    }
     /* add by yangke start */
-    else{//new coverage findings
-    	////examin mutations that contribute to this new coverage
-    	if (cycles_wo_finds >=threshold_cycles_wo_finds){
-    		if(target_bb->node && target_bb->scanning_tasks<=0 && target_bb->node->state_based){
+	hnb = has_new_bits(virgin_bits);
+	if (!cfg_loaded) loadCFG();
+	if (target_bb->node) mut_prior_mode=1;//open if we can detect target
+	if (queue_cur->exec_path_len==0){
+		queue_cur->exec_path_len=cur_trace_len;//refer has_new_bits() for its calculation
+		if(update_margin_bbs(len)){
+			add_candidate(queue_cur,cur[target_bb->node->rid]);
+			//set base_value for candidate under focus
+		}
+//		Node * node_list[margin_bb_count];
+//		has_new_var_bits(virgin_var_bits,node_list);
+
+		return 0;//TODO:check whether this will discard new pathes
+	}
+
+	if(target_bb->node && (0xffffffffffffffff!=cur[target_bb->node->rid])){//trigger target
+		switch (target_bb->node->branch_type)
+		{
+			case UNKNOWN:
+				if(target_bb->scanning_tasks>0 && target_bb->c_focus){//&& queue_cur->exec_path_len==cur_trace_len&& target_bb->c_focus
+					OKF("(%llx,%llx)",target_bb->c_focus->base_value,cur[target_bb->node->rid]);
+					if(target_bb->c_focus && (target_bb->c_focus->base_value!=cur[target_bb->node->rid])){//during scanning we find a different value
+						add_position(&target_bb->c_focus->eff_pos_list,target_bb->c_focus->fuzz_pos-1);//signal the type check after finish linear search.
+					}
+				}else if(target_bb->type_detecting){//&& queue_cur->exec_path_len==cur_trace_len
+					LinkedPosition *p=target_bb->c_focus->pos_focus;
+					u8 * t=(u8 *)mem;
+					u8 answer=(u8)(t[p->pos]+cur[target_bb->node->rid]);
+					OKF("answer:0x%x=%x+%llx,%d,cur_trace_len=%d",answer,t[p->pos],cur[target_bb->node->rid],queue_cur->exec_path_len,cur_trace_len);
+					if(p->fuzz_cnt==1){
+						p->answer=(u8*)malloc(sizeof(u8));
+						*(p->answer)=answer;
+					}else if(p->fuzz_cnt>1 && p->answer && *(p->answer)!=answer){
+						free(p->answer);
+						p->answer=NULL;
+					}
+					unseen(&p->value_list,cur[target_bb->node->rid]);
+					if(p->fuzz_cnt==3 && p->value_list.len==3){
+						OKF("%x,%llx",t[p->pos],(u64)cur[target_bb->node->rid]);
+						OKF("VALUE:0x%llx",t[p->pos]+cur[target_bb->node->rid]);
+						target_bb->node->branch_type=FIELD_BASED;
+					}
+				}
+				break;
+			case FIELD_BASED:
+				if(cycles_wo_finds >=target_bb->max_len*10){
+					target_bb->node->branch_type=STATE_BASED;
+				}
+				break;
+			case STATE_BASED:
 				if(cur_trace_len>=queue_cur->exec_path_len){
-					for(int i=0;i<MUT_NUM;i++)
-					{
-						if(one_fuzz_mut_cnt[i]>0){
-							mut_score[i]+=1;//one_fuzz_mut_cnt[i];
-						}
-						//OKF("%02d,%d|%d|[%d]%s",i,mut_score[i],mut_cnt[i],tmp_mut_cnt[i],get_description(i));
-					}
+					  Node * node_list[margin_bb_count];
+					  int cnt=has_new_var_bits(virgin_var_bits,node_list);
+					  if(cnt){
+						  Strategy *s=get_strategy(queue_cur->exec_path_len);
+						  record_value_changing_mutation(node_list,cnt,s);
+					  }
+					  if(cur_trace_len>queue_cur->exec_path_len){
+						  //TODO:reserve this seed
+					  }
 				}
-			}else{
-				for(int i=0;i<MUT_NUM;i++)
-				{
-					if(one_fuzz_mut_cnt[i]>0){
-						mut_score[i]+=1;//one_fuzz_mut_cnt[i];
-					}
-					//OKF("%02d,%d|%d|[%d]%s",i,mut_score[i],mut_cnt[i],tmp_mut_cnt[i],get_description(i));
+		}
+	}
+    if (!hnb) {
+    	if (crash_mode) total_crashes++;
+    	return 0;
+    }else{//new coverage fond
+    	//examin mutations that contribute to this new coverage
+    	if(target_bb->node && target_bb->node->branch_type==STATE_BASED && cur_trace_len<queue_cur->exec_path_len){
+
+		}else{
+			for(int i=0;i<MUT_NUM;i++)
+			{
+				if(one_fuzz_mut_cnt[i]>0){
+					mut_score[i]+=1;//one_fuzz_mut_cnt[i];
 				}
+				//OKF("%02d,%d|%d|[%d]%s",i,mut_score[i],mut_cnt[i],tmp_mut_cnt[i],get_description(i));
 			}
-    		int randwin=0;
-			if(mut_prior_mode){
-				monitor_win++;
-				stride+=DELTA;
-			}else{
-				//OKF("AFLGo Random defeat Variable Monitor!");
-				random_win++;
-				stride-=DELTA;
-				stride=stride<INITIAL_STRIDE?INITIAL_STRIDE:stride;
-				randwin=1;
+		}
+
+    	if (!cfg_loaded)
+			loadCFG();
+		int updated=update_margin_bbs(len);
+		get_strategy(cur_trace_len);
+		if(updated){
+			add_it=1;
+		}else if (target_bb->node && target_bb->node->branch_type!=STATE_BASED){
+			//if(target_bb->node->branch_type==FIELD_BASED)return 0;
+			if(queue_cycle > target_bb->born_cycle+target_bb->max_len*14){
+				target_bb->node->branch_type=STATE_BASED;
+				remove_candidates();
+				remove_values(&target_bb->value_list);
+				FATAL("target rid=%d,%s is a state based target",target_bb->node->rid,target_bb->node->bbname);
 			}
-			//OKF("mon/rand mut_times:%d|%d,%0.2f,win_times,%d|%d",monitor_mut,random_mut,(float)monitor_mut/(float)random_mut,monitor_win,random_win);
-			/*if (mut_prior_mode){
-				//OKF("Switch back to AFLGO normal mode!");
-				mut_prior_mode=0;
-			}*/
-			if(randwin){
-				threshold_cycles_wo_finds+=INIT_THRESHOLD_CYCLES_WO_FINDS;//bonus
-			}else{
-				threshold_cycles_wo_finds=INIT_THRESHOLD_CYCLES_WO_FINDS;
-			}
-			max_mut_loop_bound=INIT_MUT_LOOP_BOUND;
+		}
 
-
-			if (!cfg_loaded)
-				loadCFG();
-			int updated=update_margin_bbs(len);
-
-			get_strategy(cur_trace_len);
-
-			if(target_bb->node && !target_bb->node->state_based){
-				u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
-				if(0xffffffffffffffff==cur[target_bb->node->rid]){//miss target
-					if(target_bb->scanning_tasks>0){//Do not report target missing inputs during linear search.
-						return 0;
-					}
-					if(cycles_wo_finds<10){//Give it more time to solve field-based condition.
-						return 0;
-					}else{//Time out. This condition must be state-based. Add buffered target reachable inputs to queue.
-						enqueue_backups();
-				    	OKF("target rid=%d,%s is a state based target",target_bb->node->rid,target_bb->node->bbname);
-				    	target_bb->node->state_based=1;
-				    }
-				}else{//trigger target
-					if(target_bb->scanning_tasks <3){
-						//One input is enough for solving field based condition.
-						//start linear search
-						target_bb->scanning_tasks+=1;
-						target_bb->max_len=len>target_bb->max_len?len:target_bb->max_len;
-						char key[32];
-						sprintf(key,"%d",cur_trace_len);
-						map_set(&target_bb->trace2fuzz_pos,key,0);
-					}else if(queue_cycle < target_bb->born_cycle+target_bb->max_len * 5){
-						//OKF("target_bb->scanning_tasks=%d",target_bb->scanning_tasks);
-						//For field based condition, different trace may trigger same branch
-						//Give it another 10 cycles for branch solving
-						cycles_wo_finds=0;
-						fn = alloc_printf("%s/queue/id:%06u,%s_", out_dir, queued_paths+backup_cnt++,
-						                      describe_op(hnb));
-						add_to_backup(fn, len, 0);
-						fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
-						if (fd < 0) PFATAL("Unable to create '%s'", fn);
-						ck_write(fd, mem, len, fn);
-						close(fd);
-						return 0;
-					}else{
-						enqueue_backups();
-						target_bb->node->state_based=1;
-						OKF("target rid=%d,%s is a state based target",target_bb->node->rid,target_bb->node->bbname);
-					}
-				}
-
-			}
-
-
-			/*if(cur_trace_len > max_trace_len){
-				cleanup_scc_indicator_value();
-			}*/
-/*
-			  int ridlist[margin_bb_count];
-			  int cnt=has_new_var_bits(virgin_var_bits,ridlist);
-			  char index_list_str[MAX_MUT_POS/4];
-			  char *ptr=index_list_str;
-			  for(int i=0;i<cnt;i++){
-				  //int index=rid2index[ridlist[i]];
-				  //int l=sprintf(ptr,"(%d,%s),",ridlist[i],vertex_index[index].bbname);
-				  ptr+=sprintf(ptr,"%d,",ridlist[i]);
-				  if(ptr-index_list_str>=MAX_MUT_POS/4){
-					  FATAL("ptr Overflow!:%p",ptr);
-				  }
-				  //record_value_changing_mutation(index,1);//muts recognized in this place has lower quality=1
-			  }
-
-			  if (cnt>0){
-				  WARNF("%d affected branch:%s\n",cnt,index_list_str);
-				  record_value_changing_mutation2(-1,1);
-//				  if(!mut_prior_mode){
-//				  					  mut_prior_mode=1;//OKF("Switch to mut_prior_mode!");
-//				  				  }
-
-//				  u8 * log_file_name=alloc_printf("%s/new_path_affected_branch.txt", out_dir);
-//				u8 * info=alloc_printf("%d affected branch:%s,margin_bb_count:%d\n",cnt,index_list_str,margin_bb_count);
-//				int debug_fd = open(log_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
-//				if (debug_fd < 0) PFATAL("Unable to create '%s'", log_file_name);
-//				ck_write(debug_fd, info, strlen(info), log_file_name);
-//				close(debug_fd);
-			  }*/
-
-			//t1=t2=t3=0;
-			//cleanup_value_changing_mutation_record();
-			if (target_bb->node && target_bb->scanning_tasks<=0 && target_bb->node->state_based){
-				cleanup_value_changing_mutation_record();
-				WARNF("clean UP!");
-			}else if (updated){
-				cleanup_value_changing_mutation_record();
-				WARNF("clean UP!");
-			}
-			/*
-    		if (!cfg_loaded)
-    			loadCFG();
-    		int ridlist[margin_bb_count];
-    		int cnt=has_new_var_bits(virgin_var_bits,ridlist);//don't update margin before do this
-    		for(int i=0;i<cnt;i++){
-    			int index=rid2index[ridlist[i]];
-				record_value_changing_mutation(index,2);//muts recognized in this place has higher quality=2
-				if(!mut_prior_mode){
-					  mut_prior_mode=1;//OKF("Switch to mut_prior_mode!");
-				}
-    		}
-    		update_margin_bbs(len);//the update must be after has_new_var_bits
-    		for(int i=0;i<vertex_num;i++)
-    		{
-    			if(!vertex_index[i].is_margin && vertex_index[i].is_margin_last_check){
-    				OKF("Margin: rid=%d, degree=%d solved!",vertex_index[i].rid,vertex_index[i].out_degree);
-    			}
-    		}*/
-    	}
+		if ((target_bb->node && target_bb->node->branch_type==STATE_BASED)||updated){
+			cleanup_value_changing_mutation_record();
+			WARNF("clean UP!");
+		}
     }
     /* add by yangke end */
 #ifndef SIMPLE_FILES
@@ -4361,6 +4337,13 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     }
 
     queue_top->exec_cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
+
+    /* add by yangke start */
+    if(add_it)
+    {
+  	  add_candidate(queue_top,cur[target_bb->node->rid]);
+    }
+    /* add by yangke start */
 
     /* Try to calibrate inline; this also calls update_bitmap_score() when
        successful. */
@@ -4476,7 +4459,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
       unique_crashes++;
       /* add by yangke start */
-      OKF("First Crash is Achieved! Exit now!,%d",bakv);
+      OKF("First Crash is Achieved! Exit now!");
       u8 * statistic_file_name=alloc_printf("%s/statistics", out_dir);
       u8 * info=alloc_printf("mon/rand mut_times:%d|%d,%0.2f,win_times,%d|%d\n",monitor_mut,random_mut,(float)monitor_mut/(float)random_mut,monitor_win,random_win);
       int statistic_file_fd = open(statistic_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
@@ -5564,7 +5547,6 @@ static void show_stats(void) {
 static void show_init_stats(void) {
 
   struct queue_entry* q = queue;
-  q_add=NULL;
   u32 min_bits = 0, max_bits = 0;
   u64 min_us = 0, max_us = 0;
   u64 avg_us = 0;
@@ -6271,46 +6253,7 @@ static inline void cleanup_mutation_record()
 		one_fuzz_mut_cnt[i]=0;
 	}
 }
-/*
-static inline void add_to_invlaid_positions(int index)
-{
-	if(vertex_index[index].invalid_positions==NULL){
-		vertex_index[index].invalid_positions=malloc(sizeof(map_int_t));
-		map_init(vertex_index[index].invalid_positions);
-	}
-	for(int i=0;i<MUT_NUM;i++)
-	{
-		if(tmp_mut_cnt[i]>0)
-		{
-			for(int j=0;j<MAX_MUT_POS;j++)
-			{
-				if(tmp_mut[i][j]>0)
-				{
-					char * pos_str=alloc_printf("%d",j);
-					int *cnt=map_get(vertex_index[index].invalid_positions, pos_str);
-					if(cnt){
-						//int x=*cnt;
-						*cnt+=tmp_mut[i][j];
-						if(*cnt<0)
-							FATAL("Integer Overflow!*cnt=%d",*cnt);
-						map_get(vertex_index[index].invalid_positions, pos_str);
-						//int *cnt2=map_get(vertex_index[index].invalid_positions, pos_str);
-						//OKF("prev cnt:%d,updated cnt:%d",x,*cnt2);
-					}else{
-						map_set(vertex_index[index].invalid_positions, pos_str, tmp_mut[i][j]);
-						//int *cnt2=map_get(vertex_index[index].invalid_positions, pos_str);
-						//OKF("prev cnt:NULL,updated cnt:%d",*cnt2);
-					}
 
-
-					ck_free(pos_str);
-
-				}
-			}
-		}
-	}
-}
-*/
 static int chcnt=0;
 static void check_record(Strategy * s,char * mark)//all values in record_map must be records in record_list
 {
@@ -6499,7 +6442,6 @@ static inline void  record_value_changing_mutation(Node * node_list[],int size,S
 		FATAL("ridlist size must >0, cur:%d",size);
 	}
 	Record * tmp_r=NULL;
-	OKF("##target_bb:%p",node_list[0]);
 	for(int i=0;i<size;i++)
 	{
 		char node_ptr_str[32];
@@ -6549,7 +6491,7 @@ static inline void  record_value_changing_mutation(Node * node_list[],int size,S
 				}else{
 					temp_distance=node_list[i]->distance;
 				}*//*
-				if(target_bb->node && target_bb->scanning_tasks<=0 && target_bb->node->state_based){
+				if(target_bb->node && target_bb->scanning_tasks<=0 && target_bb->node->branch_type==2){
 					//handle the loop out indicator
 					char ptr_str[32];
 					sprintf(ptr_str,"%p",node_list[i]);
@@ -6654,7 +6596,7 @@ static inline void  record_value_changing_mutation(Node * node_list[],int size,S
 			}else{
 				temp_distance=node_list[i]->distance;
 			}*//*
-			if(target_bb->node && target_bb->scanning_tasks<=0 && target_bb->node->state_based){
+			if(target_bb->node && target_bb->scanning_tasks<=0 && target_bb->node->branch_type==2){
 				char ptr_str[32];
 				sprintf(ptr_str,"%p",node_list[i]);
 				void **p=map_get(&scc_indicators,ptr_str);
@@ -6909,7 +6851,7 @@ static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 	arg[0]=-1;
 	arg[1]=-1;
 
-	if (mut_prior_mode||target_bb->scanning_tasks>0)
+	if (mut_prior_mode||target_bb->c_focus)
 	{
 
 		/* find suitable template strategy */
@@ -6921,7 +6863,7 @@ static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 //		int with_dict[]={10,15,1,4,5};//they are cases without break exception
 //		int without_dict[]={10,1,4,5};//they are cases without break exception
 
-		if(!target_bb->node||target_bb->node->state_based){
+		if(!target_bb->node||target_bb->node->branch_type==STATE_BASED){
 			goto monitor;
 		}
 		// note that we must handle the case when queue_cur->exec_path_len==0 before here
@@ -6929,31 +6871,66 @@ static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 		if(queue_cur->exec_path_len<=0){
 			FATAL("queue_cur->exec_path_len:%d<=0",queue_cur->exec_path_len);
 		}
-		if(target_bb->scanning_tasks>0){
-			//linear search to attack this branch
-			char key[16];
-			sprintf(key,"%d",queue_cur->exec_path_len);
-			int *p=map_get(&target_bb->trace2fuzz_pos,key);
-
-			int pos;
-			if(!p){
-				goto monitor;
-			}else{
-			   pos=*p;
-			}
-			if(0<=pos && pos<len){
-				arg[0]=10;
-				arg[1]=*map_get(&target_bb->trace2fuzz_pos,key);
-				map_set(&target_bb->trace2fuzz_pos,key,arg[1]+1);
-				return 1;
-			}else if(pos>=len){
-				target_bb->scanning_tasks-=1;
-				if(target_bb->scanning_tasks){
-					OKF("finish linear search! len=%d",len);
+		//note that target_bb->c_focus==NULL and arget_bb->c_list!=NULL may happen
+		//when a child seed launch an linear scanning durring the fuzzing stage of the father
+		//TIP:target_bb->c_focus is set in the loop of main().
+		if(target_bb->c_focus){
+			if(target_bb->scanning_tasks>0 && target_bb->c_focus->fuzz_pos>=0){
+				//linear search to attack this branch
+				if(0<=target_bb->c_focus->fuzz_pos && target_bb->c_focus->fuzz_pos <len){
+					arg[0]=10;
+					arg[1]=target_bb->c_focus->fuzz_pos++;
+					return 1;
+				}else if(target_bb->c_focus->fuzz_pos >= len){
+					arg[1]=target_bb->c_focus->fuzz_pos=-1;
+					target_bb->scanning_tasks=0;
+					LinkedPosition *p=target_bb->c_focus->eff_pos_list.head;
+					while(p){
+						OKF("@%d",p->pos);
+						p=p->next;
+					}
+					OKF("finish linear search! len=%d, changed=%d",len,target_bb->c_focus->eff_pos_list.len);
+					if(target_bb->c_focus->eff_pos_list.len==0){//cannot judge it as field value based branch
+						target_bb->node->branch_type=STATE_BASED;
+						remove_candidates();
+						remove_values(&target_bb->value_list);
+						FATAL("target rid=%d,%s is a state based target",target_bb->node->rid,target_bb->node->bbname);
+						goto monitor;
+					}else{//target_bb->c_focus->eff_pos_list.len>0
+						target_bb->type_detecting=1;
+						target_bb->c_focus->pos_focus=target_bb->c_focus->eff_pos_list.head;
+						//goto type_detecting
+					}
 				}
-				map_set(&target_bb->trace2fuzz_pos,key,-1);
 			}
+			if(target_bb->type_detecting){
+				if(target_bb->c_focus->pos_focus->fuzz_cnt<3){
+					target_bb->c_focus->pos_focus->fuzz_cnt++;
+//					OKF("pos_focus->fuzz_cnt=%d",target_bb->c_focus->pos_focus->fuzz_cnt-1);
+				}else{
+					display_value_list(target_bb->c_focus->pos_focus);
+					target_bb->c_focus->pos_focus=target_bb->c_focus->pos_focus->next;
+					if(!target_bb->c_focus->pos_focus){
+						OKF("Finish type detection!");
+						if(-1!=target_bb->node->rid)
+							FATAL("target_bb: %s,rid=%d",target_bb->node->bbname,target_bb->node->rid);
+						target_bb->type_detecting=0;
+						if(target_bb->node->branch_type==UNKNOWN){
+							target_bb->node->branch_type=STATE_BASED;
+							FATAL("target_bb->node->branch_type=%d",target_bb->node->branch_type);
+						}else if(target_bb->node->branch_type==FIELD_BASED && target_bb->c_focus->eff_pos_list.head->answer){
+							arg[0]=-1;
+							return 1;
+						}
+						goto monitor;
+					}
+				}
+				if(!target_bb->c_focus->pos_focus)FATAL("NNNNNN");
 
+				arg[0]=10;
+				arg[1]=target_bb->c_focus->pos_focus->pos;
+				return 1;
+			}
 		}
 monitor:
 		if(s->record_list)
@@ -7000,7 +6977,7 @@ monitor:
 			if (mut_prior_mode==1 && valid_mut_cnt>0 && rand<VALUE_CHANGE_STRATEGY_BOUND){//75%
 				//select mutation
 				int th=35;//35//40;
-				if(target_bb->node->state_based){
+				if(target_bb->node->branch_type==STATE_BASED){
 					th=40;//40//75
 				}
 				if(perfect_mut_cnt>0 && rand <th){
@@ -7012,14 +6989,14 @@ monitor:
 				}else{
 					arg[0]=UR(range);
 				}
-				if(target_bb->node->state_based && rand%2>0){
+				if(target_bb->node->branch_type==STATE_BASED && rand%2>0){
 					arg[1]=-1;
 				}else{
 					arg[1]=gen_pos_from_record(r,0);
 				}
 				//select position
 
-//				if(target_bb->node->state_based){//share position
+//				if(target_bb->node->branch_type==2){//share position
 //					arg[1]=gen_pos_from_record_list(0);
 //				}else{
 //					arg[1]=gen_pos_from_record(r,0);
@@ -8279,6 +8256,7 @@ havoc_stage:
 	  //my_stage_max=stage_max;
 	  cleanup_value_changing_mutation_record();
   }*/
+
   /* add by yangke end */
   for (stage_cur = 0; stage_cur < my_stage_max; stage_cur++) {
 
@@ -8306,8 +8284,11 @@ havoc_stage:
 			 linear_search=1;
     	 }else{
     	     linear_search=dispatch_random(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0),temp_len,arg);
+    	     if(arg[0]==-1){
+    	    	 out_buf[target_bb->c_focus->eff_pos_list.head->pos]=*(target_bb->c_focus->eff_pos_list.head->answer);
+    	     }
     	 }
-    	 if(linear_search||target_bb->scanning_tasks){
+    	 if(linear_search||target_bb->scanning_tasks||target_bb->type_detecting){
     		 stage_cur=my_stage_max;
     		 i=my_use_stacking;
     	 }
@@ -8589,16 +8570,8 @@ havoc_stage:
              possibility of a no-op. */
 
           /* add by yangke start */
-        	//out_buf[0x1d0]=0xff;out_buf[0x1d1]=0xff;out_buf[0x2cb]=0x1;
-//        	u8 xx=UR(len-1);
-//        	arg[1]=0x1d0;
-//        	out_buf[0x1d0]=0xff;out_buf[0x1d1]=UR(256);
-//        	out_buf[UR(len)]=0x1;
-//        	bakv=out_buf[0x2cb];
-//        	        	  for(int i=0x1d0;i<0x2cb+16;i+=16){
-//        	        		  OKF("%x %x %x %x %x %x %x %x",out_buf[i],out_buf[i+1],out_buf[i+2],out_buf[i+3],
-//        	        				  out_buf[i+4],out_buf[i+5],out_buf[i+6],out_buf[i+7]);
-//        	        	  }
+          //out_buf[0x1d0]=0xff;out_buf[0x1d1]=0xff;out_buf[0x2cb]=0x1;
+
 
           if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len)){
 			  arg[1]=UR_FIX(temp_len);
@@ -8609,19 +8582,9 @@ havoc_stage:
 		  if (cycles_wo_finds >=threshold_cycles_wo_finds){
 			  record_possible_value_changing_mutation(10,arg[1]);
 		  }
-		  if(queue_cur->exec_path_len==0){//do nothing
 
-		  }/*else if(arg[1]==0x1d1){
-			  //out_buf[0x1d0]=0xff;out_buf[0x1d1]=0xff;out_buf[0x2cb]=0x1;
-			  //FATAL("55555555555");
-			  //out_buf[0x1d0] ^= 1 + UR(255);
-			  out_buf[0x1d0]=UR(255);ttt=out_buf[0x1d0];
-			  out_buf[0x1d1]=UR(255);
-			  //out_buf[0x2cb]=0x1;
-
-		  }*/else{
-			  out_buf[arg[1]] ^= 1 + UR(255);
-		  }
+		  out_buf[arg[1]] ^= 1 + UR(255);
+		  OKF("FUZZPOS:%x, v=0x%x",arg[1],out_buf[arg[1]]);
 
 
 //          if(linear_search){
@@ -10477,6 +10440,22 @@ int main(int argc, char** argv) {
     if (stop_soon) goto stop_fuzzing;
   }
 
+  /* add by yangke start */
+  if(!target_bb){
+  	  target_bb=(Target *)malloc(sizeof(Target));
+  	  target_bb->node=NULL;
+  	  target_bb->born_cycle=-1;
+  	  target_bb->max_len=0;
+  	  strcpy(target_bb->function,"");
+  	  target_bb->scanning_tasks=0;
+  	  target_bb->type_detecting=0;
+  	  target_bb->c_focus=NULL;
+  	  target_bb->c_list=NULL;
+  	  target_bb->c_list_len=0;
+  	  target_bb->value_list.head=NULL;
+  	  target_bb->value_list.len=0;
+  }
+
   while (1) {
 
     u8 skipped_fuzz;
@@ -10495,83 +10474,7 @@ int main(int argc, char** argv) {
         seek_to--;
         queue_cur = queue_cur->next;
       }
-      /* add by yangke start */
-      if(!target_bb){
-      	  target_bb=(Target *)malloc(sizeof(Target));
-      	  target_bb->node=NULL;
-      	  target_bb->born_cycle=-1;
-      	  target_bb->max_len=0;
-      	  strcpy(target_bb->function,"");
-      	  target_bb->scanning_tasks=0;
-      	  map_init(&target_bb->trace2fuzz_pos);
-      }else if(target_bb->node){
-    	  struct queue_entry * queue_cur_bak=queue_cur;
-		  char key[32];
-		  sprintf(key,"%d",queue_cur->exec_path_len);
-    	  if(!target_bb->node->state_based)
-		  {
-			  void **p=(void **)map_get(&target_bb->trace2fuzz_pos,key);
-			  while(!p && queue_cur->next){
-				  queue_cur=queue_cur->next;
-				  char key[32];
-				  sprintf(key,"%d",queue_cur->exec_path_len);
-				  p=(void **)map_get(&target_bb->trace2fuzz_pos,key);
-			  }
-			  if(!p && !queue_cur->next){
-				  queue_cur         = queue;
-				  sprintf(key,"%d",queue_cur->exec_path_len);
-				  void **p=(void **)map_get(&target_bb->trace2fuzz_pos,key);
-				  while(!p && queue_cur->next){
-					  queue_cur=queue_cur->next;
-					  char key[32];
-					  sprintf(key,"%d",queue_cur->exec_path_len);
-					  p=(void **)map_get(&target_bb->trace2fuzz_pos,key);
-				  }
-			  }
-			  if(!p){
-				  queue_cur= queue_cur_bak;
-			  }
-		  }/*else{
-			  void **p=map_get(&trace2strategy,key);
-			  if(!p){
-				  goto skip_hit_cnt;
-			  }
-			  int hit_cnt =((Strategy *)*p)->hit_cnt;
-			  while(queue_cur && hit_cnt > avg_hit_cnt  && queue_cur->exec_path_len<max_trace_len && UR(100)<75){
-				  queue_cur=queue_cur->next;
-				  if(!queue_cur) break;
-				  char key[32]
-				  sprintf(key,"%d",queue_cur->exec_path_len);
-				  void **p=map_get(&trace2strategy,key);
-				  if(!p){
-					  goto skip_hit_cnt;
-				  }
-					hit_cnt =((Strategy *)*p)->hit_cnt;
 
-			  }
-			  if(!queue_cur){
-				  queue_cur         = queue;
-				  char key[32];
-				  sprintf(key,"%d",queue_cur->exec_path_len);
-				  int hit_cnt =((Strategy *)*map_get(&trace2strategy,key))->hit_cnt;
-				  while(queue_cur && hit_cnt > avg_hit_cnt  && queue_cur->exec_path_len<max_trace_len && UR(100)<75){
-					  queue_cur=queue_cur->next;
-					  if(!queue_cur) break;
-					  char key[32];
-					  sprintf(key,"%d",queue_cur->exec_path_len);
-					  void **p=map_get(&trace2strategy,key);
-					  if(!p){
-						  goto skip_hit_cnt;
-					  }
-					  hit_cnt =((Strategy *)*p)->hit_cnt;
-				  }
-			  }
-			  if(!queue_cur){
-				  queue_cur=queue_cur_bak;
-			  }
-		  }
-skip_hit_cnt:*/
-      }
 	 /* add by yangke end */
       show_stats();
 
@@ -10612,8 +10515,19 @@ skip_hit_cnt:*/
     if (!stop_soon && exit_1) stop_soon = 2;
 
     if (stop_soon) break;
-
-    queue_cur = queue_cur->next;
+    if(target_bb->node && target_bb->c_list && target_bb->node->branch_type!=STATE_BASED){
+  	  if(!target_bb->c_focus){
+  		target_bb->c_focus=target_bb->c_list;
+  	  }else {
+  		target_bb->c_focus=target_bb->c_focus->next;
+  		if(!target_bb->c_focus){
+  			target_bb->c_focus=target_bb->c_list;
+  		}
+  	  }//do not move c_focus when target_bb->node->branch_type==1
+  	  queue_cur=target_bb->c_focus->entry;
+    }else{
+    	queue_cur = queue_cur->next;
+    }
     current_entry++;
   }
 

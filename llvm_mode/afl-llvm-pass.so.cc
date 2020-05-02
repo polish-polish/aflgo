@@ -99,10 +99,17 @@ protected:
 	void mapValue(Value *insert_point, Value *v, GlobalVariable *AFLMapPtr,
 			GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
 			unsigned int cur_loc);
+	void mapValue2(Value *insert_point, Value *v, Value *v1, GlobalVariable *AFLMapPtr,
+				GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
+				unsigned int cur_loc);
 	size_t hashName(Value *v);
 	void debug(Value *v,std::string info="#Value#--");
-	void bbRecord(unsigned int cur_loc, BasicBlock &BB, std::ofstream &bbname_id_pairs);
 	std::string getBBName(BasicBlock &BB);
+	std::string bbRecord(unsigned int cur_loc, BasicBlock &BB, std::ofstream &bbname_id_pairs);
+
+	std::string getAnswerICmp(ICmpInst * ICmp);
+	std::string getAnswerSwitch(SwitchInst * SI, std::map<std::string, int> bb_to_dis, std::vector < std::string > basic_blocks);
+	void bbBranchRecord(std::string key_str,BasicBlock &BB, std::ofstream &bb_branch_info, std::map<std::string, int> bb_to_dis, std::vector < std::string > basic_blocks);
 	void handleGetElementPtrInst(Value *insert_point, GetElementPtrInst * GEPI, GlobalVariable *AFLMapPtr,
 			GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
 			unsigned int cur_loc);
@@ -134,7 +141,14 @@ unsigned AFLCoverage::instrument_cnt = 0;
 unsigned AFLCoverage::bb_cnt = 0;
 unsigned AFLCoverage::lattice = 0;//shr step
 /* add by yangke end */
-void AFLCoverage::bbRecord(unsigned int cur_loc, BasicBlock &BB,
+/* Record the basic block informatio and return the its id_str
+ * The id_str is a star graph that construct of all path of:[pred_pred_pred]->[pred_pred]->[pred]->[it]->[succ]
+ * e.g. pred1{pred_pred1(pred_pred_pred1&pred_pred_pred2)#pred_pred2(...)},pred2{...};succ1,succ2
+ * And "pred" "it" et al in this expression is the debugging string of the corresponding BasicBlock
+ * which is debugging information of the first Instruction get by BB.getFirstInsertionPt().
+ * e.g. jdmarker.c:601:32
+ * */
+std::string AFLCoverage::bbRecord(unsigned int cur_loc, BasicBlock &BB,
 		std::ofstream &bbname_id_pairs) {
 	std::string id_str="";
 	std::string loc_str="";
@@ -144,9 +158,10 @@ void AFLCoverage::bbRecord(unsigned int cur_loc, BasicBlock &BB,
 	ss>>loc_str;
 	ss.clear();
 	//OKF("%d",bb_cnt);
-	ss<<bb_cnt++;
+	ss<<bb_cnt;
 	ss>>bb_cnt_str;
-	id_str= bb_cnt_str+";"+loc_str+";"+getBBName(BB)+";";
+	//id_str=";";
+	id_str=getBBName(BB)+";";
 	for (auto pit = pred_begin(&BB), pet = pred_end(&BB); pit != pet; ++pit)
 	{
 		BasicBlock* predecessor = *pit;
@@ -196,7 +211,82 @@ void AFLCoverage::bbRecord(unsigned int cur_loc, BasicBlock &BB,
 			id_str+="," + getBBName(*sit);
 		}
 	}
-	bbname_id_pairs << id_str << "\n";
+	bbname_id_pairs <<bb_cnt_str+";"+loc_str+";"+id_str<<"\n";
+	return id_str;
+}
+int getDistance(std::string bb_name,std::map<std::string, int> bb_to_dis, std::vector < std::string > basic_blocks){
+	int d=-1;
+	if (!bb_name.empty()) {
+		if (find(basic_blocks.begin(), basic_blocks.end(),
+				bb_name) == basic_blocks.end()) {
+
+			WARNF("Cannnot find bb_name: %s in distance.cfg.txt! Set it to -1",bb_name.c_str());
+
+		} else {
+
+			/* Get distance for BB */
+			std::map<std::string, int>::iterator it=bb_to_dis.find(bb_name);
+			if(it!= bb_to_dis.end()){
+				d = it->second;
+			}
+//			std::map<std::string, int>::iterator it;
+//			for (it = bb_to_dis.begin();
+//					it != bb_to_dis.end(); ++it)
+//				if (it->first.compare(bb_name) == 0)
+//					d = it->second;
+		}
+	}
+	return d;
+}
+std::string AFLCoverage::getAnswerICmp(ICmpInst * ICmp){
+	Value * op0 = ICmp->getOperand(0);
+	Value * op1 = ICmp->getOperand(1);
+	ConstantInt * consop0 = dyn_cast < ConstantInt > (op0);
+	ConstantInt * consop1 = dyn_cast < ConstantInt > (op1);
+	std::string result="";
+	std::stringstream ss;
+	if((!consop0)&&consop1){
+		ss<<consop1->getZExtValue();
+	}else if(consop0&&(!consop1)){
+		ss<<consop1->getZExtValue();
+	}
+	ss>>result;
+	return result;
+}
+std::string AFLCoverage::getAnswerSwitch(SwitchInst * SI, std::map<std::string, int> bb_to_dis, std::vector < std::string > basic_blocks){
+	std::stringstream ss;
+	std::string result="";
+	unsigned idx=0;
+	for(SwitchInst::CaseIt it=SI->case_begin();it!=SI->case_end();it++,idx++)
+	{
+		ConstantInt * value=it.getCaseValue();
+		BasicBlock * succesor=SI->getSuccessor(idx);
+		std::string bn=getBBName(*succesor);
+		if(idx!=0) ss<<",";
+		ss<<"("<<value->getZExtValue()<<","<<getDistance(bn,bb_to_dis,basic_blocks)<<")";
+	}
+	ss>>result;
+	return result;
+}
+
+void AFLCoverage::bbBranchRecord(std::string key_str,BasicBlock &BB, std::ofstream &bb_branch_info, std::map<std::string, int> bb_to_dis, std::vector < std::string > basic_blocks){
+	std::string info="";
+	TerminatorInst *TI = BB.getTerminator();
+	if (BranchInst * BI = dyn_cast < BranchInst > (TI)) {
+		if (BI->isConditional()) {
+			Value * cond = BI->getCondition();
+			if (ICmpInst * icmp = dyn_cast < ICmpInst > (cond)){
+				info=getAnswerICmp(icmp);
+			}else if (BinaryOperator * BOP = dyn_cast < BinaryOperator > (cond)) {
+				//TODO:info=getAnswerBinaryOperator(id_str,icmp,bb_branch_info);
+			}
+		}
+	}else if (SwitchInst * SI = dyn_cast < SwitchInst > (TI)) {
+		info=getAnswerSwitch(SI,bb_to_dis, basic_blocks);
+	}
+	if(info.length()>0){
+		bb_branch_info<<bb_cnt<<"|"+info<<"|"<<key_str+"\n";
+	}
 }
 std::string AFLCoverage::getBBName(BasicBlock &BB) {
 	std::string bb_name("");
@@ -252,7 +342,7 @@ std::string AFLCoverage::getBBName(BasicBlock &BB) {
 			}
 		}
 	}
-	//bbname_id_pairs << bb_name << "," << cur_loc << "\n";
+
 	if (bb_name.size()>0){
 		return bb_name;
 	}else{
@@ -265,7 +355,7 @@ std::string AFLCoverage::getBBName(BasicBlock &BB) {
 	}
 }
 inline void AFLCoverage::debug(Value *v,std::string info) { //contains format string vulnerability
-#ifdef DEBUG_
+#ifndef DEBUG_
 	std::string var_str;
 	llvm::raw_string_ostream rso(var_str);
 	v->print(rso);
@@ -354,28 +444,33 @@ void AFLCoverage::handleICmpInst(Value *insert_point, ICmpInst * ICmp, GlobalVar
 		unsigned int cur_loc) {
 	Value * op0 = ICmp->getOperand(0);
 	Value * op1 = ICmp->getOperand(1);
-	if(Constant * consop0 = dyn_cast < Constant > (op0)){
-	}else if (op0->getType()->getTypeID() != Type::VoidTyID) {
-		mapValue(insert_point, op0, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-		if (CastInst * CI = dyn_cast < CastInst > (op0)) {
-			debug(CI,"#[OP0] of ICmpInst is a CastInst#");
-			handleCastInst(insert_point, CI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-		}else if(LoadInst * LI = dyn_cast < LoadInst > (op0)) {
-			debug(LI,"#[OP0] of ICmpInst is a LoadInst#");
-			handleLoadInst(insert_point, LI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-		}
-	}
-	if(Constant * consop1 = dyn_cast < Constant > (op1)){
-	}else if (op1->getType()->getTypeID() != Type::VoidTyID) {
-		mapValue(insert_point, op1, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-		if (CastInst * CI = dyn_cast < CastInst > (op1)) {
-			debug(CI,"#[OP1] of ICmpInst is a CastInst#");
-			handleCastInst(insert_point, CI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-		}else if(LoadInst * LI = dyn_cast < LoadInst > (op1)) {
-			debug(LI,"#[OP1] of ICmpInst is a LoadInst#");
-			handleLoadInst(insert_point, LI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-		}
-	}
+//	Constant * consop0 = dyn_cast < Constant > (op0);
+//	Constant * consop1 = dyn_cast < Constant > (op1);
+
+	mapValue2(insert_point, op0,op1, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+
+//	if(Constant * consop0 = dyn_cast < Constant > (op0)){
+//	}else if (op0->getType()->getTypeID() != Type::VoidTyID) {
+//		mapValue(insert_point, op0, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+//		if (CastInst * CI = dyn_cast < CastInst > (op0)) {
+//			debug(CI,"#[OP0] of ICmpInst is a CastInst#");
+//			handleCastInst(insert_point, CI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+//		}else if(LoadInst * LI = dyn_cast < LoadInst > (op0)) {
+//			debug(LI,"#[OP0] of ICmpInst is a LoadInst#");
+//			handleLoadInst(insert_point, LI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+//		}
+//	}
+//	if(Constant * consop1 = dyn_cast < Constant > (op1)){
+//	}else if (op1->getType()->getTypeID() != Type::VoidTyID) {
+//		mapValue(insert_point, op1, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+//		if (CastInst * CI = dyn_cast < CastInst > (op1)) {
+//			debug(CI,"#[OP1] of ICmpInst is a CastInst#");
+//			handleCastInst(insert_point, CI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+//		}else if(LoadInst * LI = dyn_cast < LoadInst > (op1)) {
+//			debug(LI,"#[OP1] of ICmpInst is a LoadInst#");
+//			handleLoadInst(insert_point, LI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+//		}
+//	}
 }
 void AFLCoverage::handleBinaryOperator(Value *insert_point, BinaryOperator * BOP, GlobalVariable *AFLMapPtr,
 		GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
@@ -419,7 +514,7 @@ void AFLCoverage::InstrumentBB(Value *insert_point, GlobalVariable *AFLMapPtr,
 			Value * cond = BI->getCondition();
 			if(!insert_point) insert_point=cond;
 			if (ICmpInst * icmp = dyn_cast < ICmpInst > (cond)) {
-				debug(icmp,"#Condition Value is a ICmpInst#");
+				debug(icmp,"#Condition Value is a ICmpInst#");OKF("rid:%d",cur_loc);
 				handleICmpInst(insert_point, icmp, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
 				//OKF("Instrument[%d] With Condition:ICmpInst OK!\n",instrument_cnt++);
 			} else if (FCmpInst * fcmp = dyn_cast < FCmpInst > (cond)) {
@@ -434,24 +529,28 @@ void AFLCoverage::InstrumentBB(Value *insert_point, GlobalVariable *AFLMapPtr,
 		}
 	}else if (SwitchInst * SI = dyn_cast < SwitchInst > (TI)) {
 		Value * cond = SI->getCondition();
-		if(!insert_point) insert_point=cond;
-		if (CastInst * CI = dyn_cast < CastInst > (cond)) {
-			debug(CI,"#Condition Value depends on CastInst#");
-			handleCastInst(insert_point, CI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-			//OKF("Instrument[%d] With Condition:CastInst in SwitchInst OK!\n",instrument_cnt++);
-		}else if (LoadInst * LI = dyn_cast < LoadInst > (cond)) {
-			debug(LI,"#Condition Value depends on LoadInst#");
-			handleLoadInst(insert_point, LI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-			//OKF("Instrument[%d] With Condition:LoadInst in SwitchInst OK!\n",instrument_cnt++);
-		}
+		debug(SI,"#SwitchInst#");
+		if(!insert_point) insert_point=SI;
+		mapValue(insert_point, cond, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+//		if (CastInst * CI = dyn_cast < CastInst > (cond)) {
+//			debug(CI,"#Condition Value depends on CastInst#");
+//			handleCastInst(insert_point, CI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+//			//OKF("Instrument[%d] With Condition:CastInst in SwitchInst OK!\n",instrument_cnt++);
+//		}else if (LoadInst * LI = dyn_cast < LoadInst > (cond)) {
+//			debug(LI,"#Condition Value depends on LoadInst#");
+//			handleLoadInst(insert_point, LI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+//			//OKF("Instrument[%d] With Condition:LoadInst in SwitchInst OK!\n",instrument_cnt++);
+//		}
+//
+		unsigned idx=0;
 
-		unsigned num=0;
-
-		for(SwitchInst::CaseIt it=SI->case_begin();it!=SI->case_end();it++,num++)
+		for(SwitchInst::CaseIt it=SI->case_begin();it!=SI->case_end();it++,idx++)
 		{
 
 			///OKF("#NUM#:%d",num);
 			ConstantInt * value=it.getCaseValue();
+			BasicBlock * succesor=SI->getSuccessor(idx);
+			std::string bn=getBBName(*succesor);
 			//int64_t x=value->getSExtValue();
 			debug(value,"#Case Value#");
 			//OKF("#Case Value#SExt#i32:%d", (int)x);
@@ -528,13 +627,96 @@ void AFLCoverage::mapValue(Value *insert_point, Value *v, GlobalVariable *AFLMap
 	LoadInst * pre_v = IRB.CreateLoad(LargestType,MapValuePtr);
 #endif
 	pre_v->setMetadata(M.getMDKindID("nosanitize"),MDNode::get(C, None));    
-	if(flag)debug(pre_v,"pre_v\t");
+	debug(pre_v,"pre_v\t");
+	//Value * shled_prev=IRB.CreateShl(pre_v,ConstantInt::get(LargestType, 1));
+	//Value * casted_v=IRB.CreateZExt(v,LargestType);
+	//debug(casted_v,"casted_v\t");
+
+	//Value * shled_v=IRB.CreateShl(casted_v,lattice);
+	//if(flag)debug(shled_v,"shled_v\t");
+	//Value * new_v = IRB.CreateXor(shled_v, pre_v);
+	//Value * new_v = IRB.CreateXor(casted_v,shled_prev);
+	//debug(new_v,"new_v\t");
+
+#ifdef __x86_64__
+	lattice=(lattice+8)%64;
+#else
+	lattice=(lattice+8)%32;
+#endif
+
+	StoreInst *myStore = IRB.CreateStore(v, MapValuePtr);//ConstantInt::get(LargestType, instrument_cnt)
+	myStore->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+	debug(myStore,"myStore\t");
+
+}
+void AFLCoverage::mapValue2(Value *insert_point, Value *v,Value *v1, GlobalVariable *AFLMapPtr,
+		GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
+		unsigned int cur_loc) {
+
+	LLVMContext &C = M.getContext();
+	//IntegerType *Int8Ty  = IntegerType::getInt8Ty(C);
+	//IntegerType *Int32Ty = IntegerType::getInt32Ty(C);
+	IntegerType *Int64Ty = IntegerType::getInt64Ty(C);
+	BasicBlock::iterator IP = BB.getFirstInsertionPt();
+	BasicBlock::iterator InsertIP=IP;
+    ///debug(v,"Value to store");
+	int flag=1;
+    for(int i=0;IP!= BB.end();IP++,i++)
+	{
+		///std::string info_str;
+		///llvm::raw_string_ostream rso(info_str);
+		///rso<<"BBInst["<<i<<"]";
+		///debug(&(*IP),rso.str());
+		if (&(*IP) == insert_point){
+			InsertIP = IP;flag=0;
+			break;
+		}
+	}
+    //IRBuilder<> IRB(&(*InsertIP));
+    IRBuilder<> IRB((Instruction *)insert_point);
+	//use Int64Ty
+	/* Load SHM pointer */
+
+	LoadInst *MapPtr = IRB.CreateLoad(AFLMapPtr);
+	MapPtr->setMetadata(M.getMDKindID("nosanitize"),MDNode::get(C, None));
+	if(flag)
+	debug(MapPtr,"MapPtr\t");
+
+#ifdef __x86_64__
+	IntegerType *LargestType = Int64Ty;
+	ConstantInt *Offset = ConstantInt::get(LargestType, MAP_SIZE +16+(cur_loc<<3));
+#else
+	IntegerType *LargestType = Int32Ty;
+	ConstantInt *Offset = ConstantInt::get(LargestType, MAP_SIZE +16+(cur_loc<<2));
+#endif
+
+	Value *_MapValuePtr = IRB.CreateGEP(MapPtr, Offset);
+	ConstantInt *Zero=ConstantInt::get(LargestType, 0);
+	Value *MapValuePtr = IRB.CreateGEP(LargestType, _MapValuePtr, Zero);
+	if(flag)debug(MapValuePtr,"MapValuePtr\t");
+
+#ifdef LLVM_OLD_DEBUG_API
+	LoadInst * pre_v = IRB.CreateLoad(MapValuePtr);
+	pre_v->mutateType(LargestType);
+#else
+	LoadInst * pre_v = IRB.CreateLoad(LargestType,MapValuePtr);
+#endif
+	pre_v->setMetadata(M.getMDKindID("nosanitize"),MDNode::get(C, None));
+	debug(pre_v,"pre_v\t");
+	//Value * shled_prev=IRB.CreateShl(pre_v,ConstantInt::get(LargestType, 1));
+	//Value * casted_v=IRB.CreateZExt(v,LargestType);
+	//debug(casted_v,"casted_v\t");
+
+	//Value * shled_v=IRB.CreateShl(casted_v,lattice);
+	//if(flag)debug(shled_v,"shled_v\t");
+	//Value * new_v = IRB.CreateXor(shled_v, pre_v);
+	//Value * new_v = IRB.CreateXor(casted_v,shled_prev);
+	//debug(new_v,"new_v\t");
+
 	Value * casted_v=IRB.CreateZExt(v,LargestType);
-	if(flag)debug(casted_v,"casted_v\t");
-	Value * shled_v=IRB.CreateShl(casted_v,lattice);
-	if(flag)debug(shled_v,"shled_v\t");
-	Value * new_v = IRB.CreateXor(shled_v, pre_v);
-	if(flag)debug(new_v,"new_v\t");
+	Value * casted_v1=IRB.CreateZExt(v1,LargestType);
+	Value * sub=IRB.CreateSub(casted_v1,casted_v);
+
 
 #ifdef __x86_64__
 	lattice=(lattice+8)%64;
@@ -543,9 +725,9 @@ void AFLCoverage::mapValue(Value *insert_point, Value *v, GlobalVariable *AFLMap
 #endif
 
 
-	StoreInst *myStore = IRB.CreateStore(new_v, MapValuePtr);
+	StoreInst *myStore = IRB.CreateStore(sub, MapValuePtr);//ConstantInt::get(LargestType, instrument_cnt)
 	myStore->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-	if(flag)debug(myStore,"myStore\t");
+	debug(myStore,"myStore\t");
 
 }
 bool AFLCoverage::runOnModule(Module &M) {
@@ -560,6 +742,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 
 	std::list < std::string > targets;
 	std::map<std::string, int> bb_to_dis;
+	std::map<std::string, int> func_to_dis;
 	std::vector < std::string > basic_blocks;
 
 	if (!TargetsFile.empty()) {
@@ -579,8 +762,9 @@ bool AFLCoverage::runOnModule(Module &M) {
 
 	} else if (!DistanceFile.empty()) {
 		if (OutDirectory.empty()) {
-			FATAL("Provide output directory '-outdir <directory>'");
-			FATAL("We need to out put <BBname,RandomID> pairs into <directory>/rid_bbname_pairs.txt");
+			FATAL("Please provide output directory '-outdir <directory>'\n");
+			FATAL("We need to output <BBname,RandomID> pairs into <directory>/rid_bbname_pairs/<func_name>.rid_bbname_pairs.txt");
+			FATAL("We need to output branch info into <directory>/bb_branch_info/<func_name>.bb_branch_info.txt");
 			FATAL("TIP:<BBname>::=<file name>:<line num>:<column num>  e.g 'entry.c:45:11'");
 			return false;
 		}
@@ -607,6 +791,31 @@ bool AFLCoverage::runOnModule(Module &M) {
 			FATAL("Unable to find %s.", DistanceFile.c_str());
 			return false;
 		}
+		std::string DistanceCallgraphFile=OutDirectory + "/distance.callgraph.txt";
+		std::ifstream dcf(DistanceCallgraphFile);
+		if (dcf.is_open()) {
+
+			std::string line;
+			while (getline(dcf, line)) {
+
+				std::size_t pos = line.find(",");
+				std::string func_name = line.substr(0, pos);
+				int func_dis = (int) (100.0
+						* atof(line.substr(pos + 1, line.length()).c_str()));
+
+				func_to_dis.insert(std::pair<std::string, int>(func_name, func_dis));
+
+			}
+			dcf.close();
+
+			is_aflgo = true;
+
+		} else {
+			FATAL("Unable to find %s.", DistanceCallgraphFile.c_str());
+			return false;
+		}
+
+
 	}
 
 	LLVMContext &C = M.getContext();
@@ -886,8 +1095,12 @@ bool AFLCoverage::runOnModule(Module &M) {
 		for (auto &F : M) {
 
 			/*add by yangke start*/
+			/* Create rid_bbname_pairs directory */
+
+			if(OutDirectory.empty()){
+				WARNF("OutDirectory is empty!");
+			}
 			std::ofstream bbname_id_pairs;
-			/* Create dot-files directory */
 			std::string rid_bbname_pairs_dir(OutDirectory + "/rid_bbname_pairs");
 			struct stat sb;
 			if (stat(rid_bbname_pairs_dir.c_str(), &sb) != 0) {
@@ -896,13 +1109,43 @@ bool AFLCoverage::runOnModule(Module &M) {
 				if (-1 == dir_err)
 					WARNF("Could not create directory %s.", rid_bbname_pairs_dir.c_str());
 			}
-			//M.getSourceFileName()
 			if(!OutDirectory.empty()){
+				//M.getSourceFileName()
 				OKF("#Dump <<BBname>,RandomId> pairs to %s",
 					(rid_bbname_pairs_dir + "/" + F.getName().str() +".rid_bbname_pairs.txt\n").c_str());
 				bbname_id_pairs.open(rid_bbname_pairs_dir + "/" + F.getName().str() +".rid_bbname_pairs.txt",
+									std::ofstream::out);
+				bbname_id_pairs.close();
+				bbname_id_pairs.open(rid_bbname_pairs_dir + "/" + F.getName().str() +".rid_bbname_pairs.txt",
 					std::ofstream::out | std::ofstream::app);
 			}
+
+
+			/* Create bb_branch_info directory */
+			std::ofstream bb_branch_info;
+			std::string bb_branch_info_dir(OutDirectory + "/bb_branch_info");
+
+			if (stat(bb_branch_info_dir.c_str(), &sb) != 0) {
+				const int dir_err = mkdir(bb_branch_info_dir.c_str(),
+						S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+				if (-1 == dir_err)
+					WARNF("Could not create directory %s.", bb_branch_info_dir.c_str());
+			}
+			if(!OutDirectory.empty()){
+				//M.getSourceFileName()
+				if(func_to_dis.find(F.getName())!=func_to_dis.end())
+				{
+					OKF("#Dump branch info to %s",
+						(bb_branch_info_dir + "/" + F.getName().str() +".bb_branch_info.txt\n").c_str());
+					bb_branch_info.open(bb_branch_info_dir + "/" + F.getName().str() +".bb_branch_info.txt",
+											std::ofstream::out);
+					bb_branch_info.close();
+					bb_branch_info.open(bb_branch_info_dir + "/" + F.getName().str() +".bb_branch_info.txt",
+						std::ofstream::out | std::ofstream::app);
+				}
+			}
+
+
 			/*add by yangke end*/
 
 			int distance = -1;
@@ -1004,10 +1247,22 @@ bool AFLCoverage::runOnModule(Module &M) {
 				//original aflgo instrumentation break
 				/*add by yangke start*/
 				if (!OutDirectory.empty()){
-					bbRecord(cur_loc, BB, bbname_id_pairs);
+					std::string key_str=bbRecord(cur_loc, BB, bbname_id_pairs);
+					if (bb_branch_info.is_open()){
+						bbBranchRecord(key_str, BB, bb_branch_info, bb_to_dis, basic_blocks);
+					}
+					bb_cnt++;
 				}
 #ifndef YANGKE
-                if (distance >= 0 || AFL_R(4) ){
+                if (distance >= 0){
+                	if(getBBName(BB).find("jdmarker.c:645:7")!=std::string::npos){
+                		WARNF("jdmarker.c:645:7,rid=%d",cur_loc);
+                	}
+
+                	if(getBBName(BB).find("jdmarker.c:654:13")!=std::string::npos){
+                	    WARNF("jdmarker.c:654:13,rid=%d",cur_loc);
+                	}
+
                 	InstrumentBB(NULL, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
                 }
 
@@ -1112,6 +1367,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 			}
 			/*add by yangke start*/
 			bbname_id_pairs.close();
+			bb_branch_info.close();
 			/*add by yangke end*/
 		}
 	}
