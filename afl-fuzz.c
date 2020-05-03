@@ -342,9 +342,7 @@ static unsigned total_monitored_mut_cnt=0;//we only monitored some of the mutaio
 #define  INIT_THRESHOLD_CYCLES_WO_FINDS 0//threshold for opening mutation prior mode when startup.
 #define INIT_MUT_LOOP_BOUND 2 //inital mutation loop bound when searching for good mutation.
 #define MAX_MUT_LOOP_BOUND 4 //max mutation loop bound when searching for good mutation.
-#define DELTA 10;
-#define INITIAL_STRIDE 100
-static unsigned stride=INITIAL_STRIDE;
+
 static unsigned threshold_cycles_wo_finds=INIT_THRESHOLD_CYCLES_WO_FINDS;
 //static unsigned t1=0;//cycles_wo_finds:first time >threshold_cycles_wo_finds
 //static unsigned t2=0;//cycles_wo_finds:switch to mut_prior_mode
@@ -358,9 +356,18 @@ static double avg_hit_cnt=0.0;
 static u32 trace_classes=0;
 
 enum {
-  /* 00 */ FIELD_BASED,                      /* Field-based condition           */
-  /* 01 */ STATE_BASED,                      /* State-based condition           */
-  /* 02 */ UNKNOWN,                          /* Currently Unknown               */
+  /* 00 */ FIELD_BASED,                   /* Field-based condition           */
+  /* 01 */ STATE_BASED,                   /* State-based condition           */
+  /* 02 */ UNKNOWN                        /* Currently unknown               */
+};
+/* SCAN,JUDGE,ANSWER is three stage designed for solving obvious field comparision condition
+ * In these stage, it disable slicing, (havoc)mutate one byte a time*/
+enum {
+  /* 00 */ SCAN,                       /* Scanning for affective bytes               */
+  /* 01 */ JUDGE,                      /* Judging whether it is field based          */
+  /* 02 */ ANSWER,                     /* Solve this branch with aquired answers     */
+  /* 03 */ RANDOM                     /* Freedom fuzzing as AFLGO if we cannot
+	   										 solve it  during solving stage.         */
 };
 
 typedef struct BasicBlock{
@@ -428,11 +435,19 @@ typedef struct LinkListInteger{
 	int len;
 	struct LinkedInteger * head;
 } LinkListInteger;
+#define FMAP_LEN 3 //make sure 1<FMAP_LEN<9
+typedef struct FMap{
+	u8  input;
+	u64 output;
+	u8  valid;
+} FMap;
 typedef struct LinkedPosition{
 	int pos;
 	u8 *answer;
+	u8 is_field;
 	int fuzz_cnt;
-	LinkListInteger value_list;
+	FMap fmap[FMAP_LEN];
+	//LinkListInteger value_list;
 	struct LinkedPosition * next;
 } LinkedPosition;
 typedef struct LinkListPosition{
@@ -450,10 +465,12 @@ typedef struct Candidate{
 typedef struct Target{
 	Node* node;
 	char function[64];
-	u8 type_detecting;
+	u8 solving_stage;
 	int scanning_tasks;
 	int born_cycle;
 	int max_len;
+	LinkListInteger answer_list;
+	LinkedInteger* answer_focus;
 	LinkListInteger value_list;
 	int c_list_len;
 	Candidate * c_list;
@@ -3540,6 +3557,7 @@ static inline void remove_values();
 static inline void destroy_target(){
 	remove_candidates();
 	remove_values(&target_bb->value_list);
+	remove_values(&target_bb->answer_list);
 	free(target_bb);
 }
 
@@ -3601,16 +3619,16 @@ static CFG * loadFuncCFG(char * fname) {
 		char * answer_str=strdup(strtok(NULL,"|"));//strdup is required as the string will be recycle
 		char * key=strtok(NULL,"|");
 		map_set(&bb_branch_info,key,answer_str);//
-		OKF("%s->%s",key,answer_str);
+//		OKF("%s->%s",key,answer_str);
 	}
-	map_iter_t iter = map_iter(&bb_branch_info);
-	const char *kk;
-	while ((kk = map_next(&bb_branch_info, &iter)))
-	{
-		char * v=(char *)*map_get(&bb_branch_info, kk);
-		OKF("%s->%s",kk,v);
-
-	}
+//	map_iter_t iter = map_iter(&bb_branch_info);
+//	const char *kk;
+//	while ((kk = map_next(&bb_branch_info, &iter)))
+//	{
+//		char * v=(char *)*map_get(&bb_branch_info, kk);
+//		OKF("%s->%s",kk,v);
+//
+//	}
 	ck_free(fn);
 	fclose(f);
 
@@ -3640,7 +3658,7 @@ static CFG * loadFuncCFG(char * fname) {
 		void **p=map_get(&bb_branch_info,key_str);
 		if(p){
 			answer_str=strdup((char*)*p);
-			FATAL("%s %s->%s",fname,key_str,(char*)*p);
+			//FATAL("%s %s->%s",fname,key_str,(char*)*p);
 		}
 		Node * node=(Node *)malloc(sizeof(Node));
 		char * bbname=strtok(key_str,";");
@@ -3886,8 +3904,11 @@ static int update_margin_bbs(int len)
 								}
 								remove_candidates();
 								remove_values(&target_bb->value_list);
+								remove_values(&target_bb->answer_list);
+								target_bb->answer_focus=NULL;
 								target_bb->node=node;
 								target_bb->scanning_tasks=1;
+								target_bb->solving_stage=SCAN;
 								target_bb->max_len=len>target_bb->max_len?len:target_bb->max_len;
 								target_bb->born_cycle=queue_cycle;
 								strcpy(target_bb->function,fname);
@@ -4098,11 +4119,15 @@ static void add_position(LinkListPosition * pos_list,int pos){
 	LinkedPosition * p=(LinkedPosition *)malloc(sizeof(LinkedPosition));
 	p->pos=pos;
 	p->answer=NULL;
+	p->is_field=0;
 	p->fuzz_cnt=0;
-	p->value_list.head=NULL;
-	p->value_list.len=0;
 	p->next=pos_list->head;
 	pos_list->head=p;
+	for(int i=0;i<FMAP_LEN;i++){
+		p->fmap[i].input=0;
+		p->fmap[i].output=0;
+		p->fmap[i].valid=0;
+	}
 	pos_list->len++;
 }
 
@@ -4120,6 +4145,7 @@ static void add_candidate(struct queue_entry * entry, u64 v){
 	  target_bb->c_list=c;
 	  c->next=NULL;
 	}else{
+	  FATAL("This should not happen!!");
 	  c->next=target_bb->c_list;
 	  target_bb->c_list=c;
 	}
@@ -4130,6 +4156,13 @@ static void add_candidate(struct queue_entry * entry, u64 v){
 		FATAL("Assert c_list_len<=1 failed!");
 	}
 }
+static inline void insert_value(LinkListInteger * v_list,u64 v){
+	LinkedInteger * new_v =(LinkedInteger *)malloc(sizeof(LinkedInteger));
+	new_v->v=v;
+	new_v->next=v_list->head;
+	v_list->head=new_v;
+	v_list->len++;
+}
 static inline void remove_values(LinkListInteger * v_list){
 	LinkedInteger * i;
     while(v_list->head){
@@ -4139,9 +4172,9 @@ static inline void remove_values(LinkListInteger * v_list){
     }
     v_list->len=0;
 }
-static inline void display_value_list(LinkedPosition * p){
-	if(!p)return;
-	LinkedInteger *i=p->value_list.head;
+static inline void display_value_list(LinkListInteger *v_list){
+	if(!v_list) return;
+	LinkedInteger *i=v_list->head;
 	char * s=NULL;
 	while(i){
 		if(!s){
@@ -4153,15 +4186,52 @@ static inline void display_value_list(LinkedPosition * p){
 		}
 		i=i->next;
 	}
-	OKF("[%d]:[%s]",p->pos,s);
+	OKF("value_list:{%s}",s);
 	ck_free(s);
+}
+static inline void display_fmap(LinkedPosition * p){
+	if(!p)return;
+	char * s=NULL;
+	for(int i=0;i<FMAP_LEN;i++){
+		if(!s){
+			s=alloc_printf("(%x,%llx,%x)",p->fmap[i].input,p->fmap[i].output,p->fmap[i].valid);
+		}else{
+			char* t=alloc_printf("%s,(%x,%llx,%x)",s,p->fmap[i].input,p->fmap[i].output,p->fmap[i].valid);
+			ck_free(s);
+			s=t;
+		}
+	}
+	OKF("[%d] FMAP:{%s}",p->pos,s);
+}
+static void delete_position(LinkListPosition * pos_list,LinkedPosition *p){
+	if(!pos_list->head||!p) return;
+	if(pos_list->head==p){
+		pos_list->head=pos_list->head->next;
+		if(p->answer){
+			free(p->answer);
+		}
+		free(p);
+		pos_list->len--;
+	}else{
+		LinkedPosition * position=pos_list->head;
+		while(position->next!=p){
+			position=position->next;
+		}
+		if(position->next==p){
+			position->next=p->next;
+			if(p->answer){
+				free(p->answer);
+			}
+			free(p);
+			pos_list->len--;
+		}
+	}
 }
 static void remove_positions(LinkListPosition * pos_list){
 	LinkedPosition * p;
 	while(pos_list->head){
 		p=pos_list->head;
 		pos_list->head=pos_list->head->next;
-		remove_values(&p->value_list);
 		if(p->answer){
 			free(p->answer);
 		}
@@ -4189,13 +4259,28 @@ static inline int unseen(LinkListInteger *v_list, u64 v){
 			return 0;
 		}
 	}
-	LinkedInteger * new_v =(LinkedInteger *)malloc(sizeof(LinkedInteger));
-	new_v->v=v;
-	new_v->next=v_list->head;
-	v_list->head=new_v;
-	v_list->len++;
+	insert_value(v_list, v);
 	return 1;
 }
+static inline int is_output_unique(LinkedPosition *p){
+	int valid_cnt=0;
+	for(int i=0;i<FMAP_LEN;i++){
+		if(p->fmap[i].valid){
+			valid_cnt++;
+			for(int j=i+1;j<FMAP_LEN;j++){
+				if(p->fmap[i].output==p->fmap[j].output && p->fmap[i].valid && p->fmap[j].valid){
+					return 0;
+				}
+			}
+		}
+	}
+	if(valid_cnt>=FMAP_LEN-1){
+		return 1;
+	}else{
+		return 0;
+	}
+}
+
 
 /* add by yangke end */
 
@@ -4235,28 +4320,39 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 		switch (target_bb->node->branch_type)
 		{
 			case UNKNOWN:
-				if(target_bb->scanning_tasks>0 && target_bb->c_focus){//&& queue_cur->exec_path_len==cur_trace_len&& target_bb->c_focus
-					OKF("(%llx,%llx)",target_bb->c_focus->base_value,cur[target_bb->node->rid]);
-					if(target_bb->c_focus && (target_bb->c_focus->base_value!=cur[target_bb->node->rid])){//during scanning we find a different value
-						add_position(&target_bb->c_focus->eff_pos_list,target_bb->c_focus->fuzz_pos-1);//signal the type check after finish linear search.
-					}
-				}else if(target_bb->type_detecting){//&& queue_cur->exec_path_len==cur_trace_len
-					LinkedPosition *p=target_bb->c_focus->pos_focus;
-					u8 * t=(u8 *)mem;
-					u8 answer=(u8)(t[p->pos]+cur[target_bb->node->rid]);
-					OKF("answer:0x%x=%x+%llx,%d,cur_trace_len=%d",answer,t[p->pos],cur[target_bb->node->rid],queue_cur->exec_path_len,cur_trace_len);
-					if(p->fuzz_cnt==1){
-						p->answer=(u8*)malloc(sizeof(u8));
-						*(p->answer)=answer;
-					}else if(p->fuzz_cnt>1 && p->answer && *(p->answer)!=answer){
-						free(p->answer);
-						p->answer=NULL;
-					}
-					unseen(&p->value_list,cur[target_bb->node->rid]);
-					if(p->fuzz_cnt==3 && p->value_list.len==3){
-						OKF("%x,%llx",t[p->pos],(u64)cur[target_bb->node->rid]);
-						OKF("VALUE:0x%llx",t[p->pos]+cur[target_bb->node->rid]);
-						target_bb->node->branch_type=FIELD_BASED;
+				if(target_bb->c_focus){
+					if(target_bb->scanning_tasks>0){//&& queue_cur->exec_path_len==cur_trace_len&& target_bb->c_focus
+						OKF("base/cur:%llx/%llx",target_bb->c_focus->base_value,cur[target_bb->node->rid]);
+						if(target_bb->c_focus->base_value!=cur[target_bb->node->rid]){//during scanning we find a different value
+							add_position(&target_bb->c_focus->eff_pos_list,target_bb->c_focus->fuzz_pos-1);//signal the type check after finish linear search.
+						}
+					}else if(target_bb->solving_stage==JUDGE){//&& queue_cur->exec_path_len==cur_trace_len
+						LinkedPosition *p=target_bb->c_focus->pos_focus;
+						u8  * t=(u8 *)mem;
+						u8 answer=(u8)(t[p->pos]+cur[target_bb->node->rid]);
+						OKF("answer:0x%x=%x+%llx,%d,cur_trace_len=%d",answer,t[p->pos],cur[target_bb->node->rid],queue_cur->exec_path_len,cur_trace_len);
+						if(p->fuzz_cnt==1){
+							p->answer=(u8*)malloc(sizeof(u8));
+							*(p->answer)=answer;
+						}else if(p->fuzz_cnt>1 && p->answer && *(p->answer)!=answer){
+							free(p->answer);
+							p->answer=NULL;
+						}
+						p->fmap[p->fuzz_cnt-1].output=cur[target_bb->node->rid];
+						p->fmap[p->fuzz_cnt-1].valid=1;
+						if(p->fuzz_cnt==FMAP_LEN){
+							if(is_output_unique(p)){
+								OKF("%x,%llx",t[p->pos],(u64)cur[target_bb->node->rid]);
+								OKF("GUESS VALUE:0x%llx",t[p->pos]+cur[target_bb->node->rid]);
+								OKF("ANSL:%s",target_bb->node->answer_str);
+								target_bb->node->branch_type=FIELD_BASED;
+								p->is_field=1;
+								cleanup_value_changing_mutation_record();
+								Strategy *s=get_strategy(queue_cur->exec_path_len);
+								record_value_changing_mutation(&target_bb->node,1,s);
+							}
+							//else p->is_field=0 signal dispatch_random()
+						}
 					}
 				}
 				break;
@@ -4308,6 +4404,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 				target_bb->node->branch_type=STATE_BASED;
 				remove_candidates();
 				remove_values(&target_bb->value_list);
+				remove_values(&target_bb->answer_list);
 				FATAL("target rid=%d,%s is a state based target",target_bb->node->rid,target_bb->node->bbname);
 			}
 		}
@@ -4447,8 +4544,11 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
 #ifndef SIMPLE_FILES
 
-      fn = alloc_printf("%s/crashes/id:%06llu,sig:%02u,%s", out_dir,
-                        unique_crashes, kill_signal, describe_op(0));
+//      fn = alloc_printf("%s/crashes/id:%06llu,sig:%02u,%s", out_dir,
+//                        unique_crashes, kill_signal, describe_op(0));
+      fn = alloc_printf("%s/crashes/id:%06u,%llu,%f,%s", out_dir, queued_paths,
+          		          get_cur_time() - start_time, cur_distance,
+                            describe_op(hnb));
 
 #else
 
@@ -6216,8 +6316,8 @@ static inline void cleanup_value_changing_mutation_record()
 	const char *key;
 	map_iter_t iter = map_iter(&trace2strategy);
 	while ((key = map_next(&trace2strategy, &iter))) {
-	  Strategy * s=(Strategy *) *map_get(&trace2strategy, key);
-	  destroy_template_strategy(s);
+		Strategy * s=(Strategy *) *map_get(&trace2strategy, key);
+		destroy_template_strategy(s);
 	}
 	if(value_changing_mutation_record_initialized)
 		map_deinit(&trace2strategy);
@@ -6846,6 +6946,44 @@ static inline Record * select_record(Record *record_list)
 	}
 	return r;
 }
+
+static inline int init_answer_list(char * answer_str){
+	char * answer=strdup(answer_str);
+	OKF("#%s",answer);
+	if(strstr(answer,":")){
+		OKF("SWITCH");
+		char* item=strtok(answer,",");
+		do{
+			if(!strstr(item,"-1")){
+				(*strstr(item,":"))='\0';
+				insert_value(&target_bb->answer_list,(u64)atoi(item));
+			}
+			item=strtok(NULL,",");
+		}while(item);
+	}else{
+		insert_value(&target_bb->answer_list,(u64)atoi(answer));
+	}
+	OKF("target_bb->answer_list.len=%d",target_bb->answer_list.len);
+	return target_bb->answer_list.len;
+}
+static inline u8 unique_judge_value(u8 byte){
+	int cnt=target_bb->c_focus->pos_focus->fuzz_cnt-1;//already increased
+	OKF("fuzz_cnt:%d",cnt+1);
+	if(cnt<0)FATAL("cnt:%d<0",cnt);
+	int repeat;
+	do{
+		repeat=0;
+		for(int i=0;i<cnt;i++){
+			if(byte==target_bb->c_focus->pos_focus->fmap[i].input){
+				repeat=1;
+				byte=UR(256);
+				break;
+			}
+		}
+	}while(repeat);
+	target_bb->c_focus->pos_focus->fmap[cnt].input=byte;//set FMAP of pos_focus during JUDGE stage
+	return byte;
+}
 static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 {//still buggy
 	arg[0]=-1;
@@ -6875,7 +7013,7 @@ static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 		//when a child seed launch an linear scanning durring the fuzzing stage of the father
 		//TIP:target_bb->c_focus is set in the loop of main().
 		if(target_bb->c_focus){
-			if(target_bb->scanning_tasks>0 && target_bb->c_focus->fuzz_pos>=0){
+			if(target_bb->solving_stage==SCAN){// || target_bb->scanning_tasks>0 && target_bb->c_focus->fuzz_pos>=0){
 				//linear search to attack this branch
 				if(0<=target_bb->c_focus->fuzz_pos && target_bb->c_focus->fuzz_pos <len){
 					arg[0]=10;
@@ -6892,44 +7030,71 @@ static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 					OKF("finish linear search! len=%d, changed=%d",len,target_bb->c_focus->eff_pos_list.len);
 					if(target_bb->c_focus->eff_pos_list.len==0){//cannot judge it as field value based branch
 						target_bb->node->branch_type=STATE_BASED;
+						target_bb->solving_stage=RANDOM;
 						remove_candidates();
 						remove_values(&target_bb->value_list);
+						remove_values(&target_bb->answer_list);
 						FATAL("target rid=%d,%s is a state based target",target_bb->node->rid,target_bb->node->bbname);
 						goto monitor;
 					}else{//target_bb->c_focus->eff_pos_list.len>0
-						target_bb->type_detecting=1;
+						target_bb->solving_stage=JUDGE;//switch to JUDGE stage
 						target_bb->c_focus->pos_focus=target_bb->c_focus->eff_pos_list.head;
-						//goto type_detecting
 					}
 				}
 			}
-			if(target_bb->type_detecting){
-				if(target_bb->c_focus->pos_focus->fuzz_cnt<3){
+			if(target_bb->solving_stage==JUDGE){
+				if(target_bb->c_focus->pos_focus->fuzz_cnt<FMAP_LEN){
 					target_bb->c_focus->pos_focus->fuzz_cnt++;
-//					OKF("pos_focus->fuzz_cnt=%d",target_bb->c_focus->pos_focus->fuzz_cnt-1);
 				}else{
-					display_value_list(target_bb->c_focus->pos_focus);
+					display_fmap(target_bb->c_focus->pos_focus);//lets check the result
+					LinkedPosition *p=target_bb->c_focus->pos_focus;
 					target_bb->c_focus->pos_focus=target_bb->c_focus->pos_focus->next;
-					if(!target_bb->c_focus->pos_focus){
+					if(!p->is_field){
+						OKF("before delete eff_pos_list.len=%d",target_bb->c_focus->eff_pos_list.len);
+						delete_position(&target_bb->c_focus->eff_pos_list,p);
+						OKF("after delete eff_pos_list.len=%d",target_bb->c_focus->eff_pos_list.len);
+					}
+
+					if(target_bb->c_focus->pos_focus){
+						target_bb->c_focus->pos_focus->fuzz_cnt++;
+					}else{
 						OKF("Finish type detection!");
-						if(-1!=target_bb->node->rid)
-							FATAL("target_bb: %s,rid=%d",target_bb->node->bbname,target_bb->node->rid);
-						target_bb->type_detecting=0;
+						OKF("target_bb: %s,rid=%d",target_bb->node->bbname,target_bb->node->rid);
+						target_bb->solving_stage=RANDOM;
 						if(target_bb->node->branch_type==UNKNOWN){
 							target_bb->node->branch_type=STATE_BASED;
-							FATAL("target_bb->node->branch_type=%d",target_bb->node->branch_type);
-						}else if(target_bb->node->branch_type==FIELD_BASED && target_bb->c_focus->eff_pos_list.head->answer){
-							arg[0]=-1;
-							return 1;
+							FATAL("target_bb:%s is state based target",target_bb->node->bbname);
+						}else if(target_bb->node->branch_type==FIELD_BASED){
+							//if(target_bb->c_focus->eff_pos_list.head->answer)
+							if(target_bb->node->answer_str){
+								target_bb->solving_stage=ANSWER;
+								OKF("ANSWER_STR:%s",target_bb->node->answer_str);
+								if(init_answer_list(target_bb->node->answer_str)>0){
+									display_value_list(&target_bb->answer_list);
+									target_bb->answer_focus=target_bb->answer_list.head;
+									OKF("v=%llx",target_bb->answer_focus->v);
+									arg[0]=-1;//signal that we have answer, fetch it from target_bb->answer_focus;
+									return 1;
+								}
+							}
 						}
 						goto monitor;
 					}
 				}
-				if(!target_bb->c_focus->pos_focus)FATAL("NNNNNN");
-
+				if(!target_bb->c_focus->pos_focus)
+					FATAL("This should not happen!");
 				arg[0]=10;
 				arg[1]=target_bb->c_focus->pos_focus->pos;
+				OKF("Set pos:0x%x",arg[1]);
 				return 1;
+			}else if(target_bb->solving_stage==ANSWER){
+				target_bb->answer_focus=target_bb->answer_focus->next;
+				if(target_bb->answer_focus){
+					arg[0]=-1;//signal that we have answer, fetch it from target_bb->answer_focus;
+					return 1;
+				}else{
+					target_bb->solving_stage=RANDOM;
+				}
 			}
 		}
 monitor:
@@ -8276,7 +8441,7 @@ havoc_stage:
     for (i = 0; i < my_use_stacking; i++) {
 
       /* add by yangke start */
-      u32 arg[2];//to store opcode and pos
+      u32 arg[3];//to store opcode and pos
       //if(mut_prior_mode){
       if(cycles_wo_finds >=threshold_cycles_wo_finds){
     	 if(queue_cur->exec_path_len==0){
@@ -8285,10 +8450,32 @@ havoc_stage:
     	 }else{
     	     linear_search=dispatch_random(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0),temp_len,arg);
     	     if(arg[0]==-1){
-    	    	 out_buf[target_bb->c_focus->eff_pos_list.head->pos]=*(target_bb->c_focus->eff_pos_list.head->answer);
+
+    	    	 if(target_bb->solving_stage!=ANSWER||target_bb->node->branch_type!=FIELD_BASED){
+    	    		 FATAL("This should not happen!!");
+    	    	 }
+    	    	 if(target_bb->answer_focus->v==0x13)
+    	    	 {
+    	    		 LinkedPosition *p=target_bb->c_focus->eff_pos_list.head;
+
+        	    	 while(p){
+        	    		 OKF("%d",p->pos);
+        	    		 OKF("!!!!!!!!!!!!!!");
+        	    		 OKF("!!!!!!!!!!!!!!");
+        	    		 OKF("!!!!!!!!!!!!!!");
+        	    		 p=p->next;
+        	    	 }
+        	    	 for(int i=0;i<0x10;i+=4){
+        	    		 OKF("%x %x %x %x",out_buf[i],out_buf[i+1],out_buf[i+2],out_buf[i+3]);
+        	    	 }
+    	    	 }
+    	    	 OKF("ANSWER:mem[0x%x]=0x%x",target_bb->c_focus->eff_pos_list.head->pos,(u8)target_bb->answer_focus->v);
+
+    	    	 out_buf[target_bb->c_focus->eff_pos_list.head->pos]=(u8)target_bb->answer_focus->v;
+    	    	 //out_buf[target_bb->c_focus->eff_pos_list.head->pos]=*(target_bb->c_focus->eff_pos_list.head->answer);
     	     }
     	 }
-    	 if(linear_search||target_bb->scanning_tasks||target_bb->type_detecting){
+    	 if(linear_search||target_bb->scanning_tasks||target_bb->solving_stage==JUDGE){
     		 stage_cur=my_stage_max;
     		 i=my_use_stacking;
     	 }
@@ -8584,8 +8771,12 @@ havoc_stage:
 		  }
 
 		  out_buf[arg[1]] ^= 1 + UR(255);
-		  OKF("FUZZPOS:%x, v=0x%x",arg[1],out_buf[arg[1]]);
-
+		  if(target_bb->solving_stage==JUDGE){
+			  out_buf[arg[1]]=unique_judge_value(out_buf[arg[1]]);
+			  OKF("JUDGE:mem[0x%x]=0x%x",arg[1],out_buf[arg[1]]);
+		  }else if(target_bb->scanning_tasks>0 || target_bb->solving_stage==SCAN){
+			  OKF("SCAN:mem[0x%x]=0x%x",arg[1],out_buf[arg[1]]);
+		  }
 
 //          if(linear_search){
 //          	  out_buf[0x1d0]=0xff;out_buf[0x1d1]=0xff;out_buf[0x2cb]=0x1;
@@ -10448,12 +10639,15 @@ int main(int argc, char** argv) {
   	  target_bb->max_len=0;
   	  strcpy(target_bb->function,"");
   	  target_bb->scanning_tasks=0;
-  	  target_bb->type_detecting=0;
+  	  target_bb->solving_stage=RANDOM;
   	  target_bb->c_focus=NULL;
   	  target_bb->c_list=NULL;
   	  target_bb->c_list_len=0;
   	  target_bb->value_list.head=NULL;
   	  target_bb->value_list.len=0;
+  	  target_bb->answer_list.head=NULL;
+  	  target_bb->answer_list.len=0;
+  	  target_bb->answer_focus=NULL;
   }
 
   while (1) {
@@ -10516,7 +10710,8 @@ int main(int argc, char** argv) {
 
     if (stop_soon) break;
     if(target_bb->node && target_bb->c_list && target_bb->node->branch_type!=STATE_BASED){
-  	  if(!target_bb->c_focus){
+  	  if(target_bb->c_list_len>1)FATAL("This should not happen!!");
+      if(!target_bb->c_focus){
   		target_bb->c_focus=target_bb->c_list;
   	  }else {
   		target_bb->c_focus=target_bb->c_focus->next;

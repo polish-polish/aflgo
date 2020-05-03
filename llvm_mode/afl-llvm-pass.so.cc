@@ -260,10 +260,10 @@ std::string AFLCoverage::getAnswerSwitch(SwitchInst * SI, std::map<std::string, 
 	for(SwitchInst::CaseIt it=SI->case_begin();it!=SI->case_end();it++,idx++)
 	{
 		ConstantInt * value=it.getCaseValue();
-		BasicBlock * succesor=SI->getSuccessor(idx);
+		BasicBlock * succesor=it.getCaseSuccessor();
 		std::string bn=getBBName(*succesor);
 		if(idx!=0) ss<<",";
-		ss<<"("<<value->getZExtValue()<<","<<getDistance(bn,bb_to_dis,basic_blocks)<<")";
+		ss<<value->getZExtValue()<<":"<<getDistance(bn,bb_to_dis,basic_blocks);
 	}
 	ss>>result;
 	return result;
