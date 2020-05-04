@@ -4269,14 +4269,17 @@ static inline int is_output_unique(LinkedPosition *p){
 			valid_cnt++;
 			for(int j=i+1;j<FMAP_LEN;j++){
 				if(p->fmap[i].output==p->fmap[j].output && p->fmap[i].valid && p->fmap[j].valid){
+					OKF("!!3");
 					return 0;
 				}
 			}
 		}
 	}
 	if(valid_cnt>=FMAP_LEN-1){
+		OKF("!!1");
 		return 1;
 	}else{
+		OKF("!!2");
 		return 0;
 	}
 }
@@ -6960,8 +6963,19 @@ static inline int init_answer_list(char * answer_str){
 			}
 			item=strtok(NULL,",");
 		}while(item);
+		if(target_bb->answer_list.len>0){//insert a random value to trigger default; we cannot make sure it will success
+			insert_value(&target_bb->answer_list,(u64)(UR(256)));
+		}
 	}else{
-		insert_value(&target_bb->answer_list,(u64)atoi(answer));
+		//eq,ne
+		//ugt,uge,ult,ule
+		//sgt,sge,slt,sle
+		u64 it=(u64)atoi(answer);
+		u64 less=it-1;
+		u64 more=it+1;
+		insert_value(&target_bb->answer_list,less);
+		insert_value(&target_bb->answer_list,more);
+		insert_value(&target_bb->answer_list,it);
 	}
 	OKF("target_bb->answer_list.len=%d",target_bb->answer_list.len);
 	return target_bb->answer_list.len;
@@ -8454,28 +8468,13 @@ havoc_stage:
     	    	 if(target_bb->solving_stage!=ANSWER||target_bb->node->branch_type!=FIELD_BASED){
     	    		 FATAL("This should not happen!!");
     	    	 }
-    	    	 if(target_bb->answer_focus->v==0x13)
-    	    	 {
-    	    		 LinkedPosition *p=target_bb->c_focus->eff_pos_list.head;
-
-        	    	 while(p){
-        	    		 OKF("%d",p->pos);
-        	    		 OKF("!!!!!!!!!!!!!!");
-        	    		 OKF("!!!!!!!!!!!!!!");
-        	    		 OKF("!!!!!!!!!!!!!!");
-        	    		 p=p->next;
-        	    	 }
-        	    	 for(int i=0;i<0x10;i+=4){
-        	    		 OKF("%x %x %x %x",out_buf[i],out_buf[i+1],out_buf[i+2],out_buf[i+3]);
-        	    	 }
-    	    	 }
     	    	 OKF("ANSWER:mem[0x%x]=0x%x",target_bb->c_focus->eff_pos_list.head->pos,(u8)target_bb->answer_focus->v);
 
     	    	 out_buf[target_bb->c_focus->eff_pos_list.head->pos]=(u8)target_bb->answer_focus->v;
     	    	 //out_buf[target_bb->c_focus->eff_pos_list.head->pos]=*(target_bb->c_focus->eff_pos_list.head->answer);
     	     }
     	 }
-    	 if(linear_search||target_bb->scanning_tasks||target_bb->solving_stage==JUDGE){
+    	 if(linear_search){//||target_bb->scanning_tasks||target_bb->solving_stage==JUDGE
     		 stage_cur=my_stage_max;
     		 i=my_use_stacking;
     	 }

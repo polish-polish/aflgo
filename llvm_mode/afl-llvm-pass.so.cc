@@ -442,35 +442,41 @@ void AFLCoverage::handleFCmpInst(Value *insert_point, FCmpInst * FCmp, GlobalVar
 void AFLCoverage::handleICmpInst(Value *insert_point, ICmpInst * ICmp, GlobalVariable *AFLMapPtr,
 		GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
 		unsigned int cur_loc) {
+
 	Value * op0 = ICmp->getOperand(0);
 	Value * op1 = ICmp->getOperand(1);
-//	Constant * consop0 = dyn_cast < Constant > (op0);
-//	Constant * consop1 = dyn_cast < Constant > (op1);
 
-	mapValue2(insert_point, op0,op1, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+	Constant * consop0 = dyn_cast < Constant > (op0);
+	Constant * consop1 = dyn_cast < Constant > (op1);
 
-//	if(Constant * consop0 = dyn_cast < Constant > (op0)){
-//	}else if (op0->getType()->getTypeID() != Type::VoidTyID) {
-//		mapValue(insert_point, op0, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-//		if (CastInst * CI = dyn_cast < CastInst > (op0)) {
-//			debug(CI,"#[OP0] of ICmpInst is a CastInst#");
-//			handleCastInst(insert_point, CI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-//		}else if(LoadInst * LI = dyn_cast < LoadInst > (op0)) {
-//			debug(LI,"#[OP0] of ICmpInst is a LoadInst#");
-//			handleLoadInst(insert_point, LI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-//		}
-//	}
-//	if(Constant * consop1 = dyn_cast < Constant > (op1)){
-//	}else if (op1->getType()->getTypeID() != Type::VoidTyID) {
-//		mapValue(insert_point, op1, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-//		if (CastInst * CI = dyn_cast < CastInst > (op1)) {
-//			debug(CI,"#[OP1] of ICmpInst is a CastInst#");
-//			handleCastInst(insert_point, CI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-//		}else if(LoadInst * LI = dyn_cast < LoadInst > (op1)) {
-//			debug(LI,"#[OP1] of ICmpInst is a LoadInst#");
-//			handleLoadInst(insert_point, LI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-//		}
-//	}
+	if((!consop0)&&consop1){
+		mapValue2(insert_point, op0, op1, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+	}else if(consop0&&(!consop1)){
+		mapValue2(insert_point, op1, op0, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+	}else{
+		if(Constant * consop0 = dyn_cast < Constant > (op0)){
+		}else if (op0->getType()->getTypeID() != Type::VoidTyID) {
+			mapValue(insert_point, op0, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+			if (CastInst * CI = dyn_cast < CastInst > (op0)) {
+				debug(CI,"#[OP0] of ICmpInst is a CastInst#");
+				handleCastInst(insert_point, CI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+			}else if(LoadInst * LI = dyn_cast < LoadInst > (op0)) {
+				debug(LI,"#[OP0] of ICmpInst is a LoadInst#");
+				handleLoadInst(insert_point, LI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+			}
+		}
+		if(Constant * consop1 = dyn_cast < Constant > (op1)){
+		}else if (op1->getType()->getTypeID() != Type::VoidTyID) {
+			mapValue(insert_point, op1, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+			if (CastInst * CI = dyn_cast < CastInst > (op1)) {
+				debug(CI,"#[OP1] of ICmpInst is a CastInst#");
+				handleCastInst(insert_point, CI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+			}else if(LoadInst * LI = dyn_cast < LoadInst > (op1)) {
+				debug(LI,"#[OP1] of ICmpInst is a LoadInst#");
+				handleLoadInst(insert_point, LI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+			}
+		}
+	}
 }
 void AFLCoverage::handleBinaryOperator(Value *insert_point, BinaryOperator * BOP, GlobalVariable *AFLMapPtr,
 		GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
