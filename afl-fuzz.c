@@ -366,8 +366,7 @@ enum {
   /* 00 */ SCAN,                       /* Scanning for affective bytes               */
   /* 01 */ JUDGE,                      /* Judging whether it is field based          */
   /* 02 */ ANSWER,                     /* Solve this branch with aquired answers     */
-  /* 03 */ RANDOM                     /* Freedom fuzzing as AFLGO if we cannot
-	   										 solve it  during solving stage.         */
+  /* 03 */ RANDOM                     /* Free fuzzing as AFLGO if we cannot	   										 solve it  during solving stage.         */
 };
 
 typedef struct BasicBlock{
@@ -7096,9 +7095,7 @@ static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 				}
 			}
 			if(target_bb->solving_stage==JUDGE){
-				if(target_bb->c_focus->pos_focus->fuzz_cnt<FMAP_LEN){
-					target_bb->c_focus->pos_focus->fuzz_cnt++;
-				}else{
+				if(target_bb->c_focus->pos_focus->fuzz_cnt>=FMAP_LEN){
 					display_fmap(target_bb->c_focus->pos_focus);//lets check the result
 					LinkedPosition *p=target_bb->c_focus->pos_focus;
 					target_bb->c_focus->pos_focus=target_bb->c_focus->pos_focus->next;
@@ -7110,39 +7107,37 @@ static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 						delete_position(&target_bb->c_focus->eff_pos_list,p);
 						OKF("after delete eff_pos_list.len=%d",target_bb->c_focus->eff_pos_list.len);
 					}
+				}
 
-					if(target_bb->c_focus->pos_focus){
-						target_bb->c_focus->pos_focus->fuzz_cnt++;
-					}else{
-						OKF("Finish type detection!");
-						OKF("target_bb: %s,rid=%d",target_bb->node->bbname,target_bb->node->rid);
-						target_bb->solving_stage=RANDOM;
-						if(target_bb->node->branch_type==UNKNOWN){
-							target_bb->node->branch_type=STATE_BASED;
-							FATAL("target_bb:%s is a state based target",target_bb->node->bbname);
-						}else if(target_bb->node->branch_type==FIELD_BASED){
-							//if(target_bb->c_focus->eff_pos_list.head->answer)
-							if(target_bb->node->answer_str){
-								target_bb->solving_stage=ANSWER;
-								OKF("ANSWER_STR:%s",target_bb->node->answer_str);
-								if(init_answer_list(target_bb->node->answer_str)>0){
-									display_value_list(&target_bb->answer_list);
-									target_bb->answer_focus=target_bb->answer_list.head;
-									OKF("v=%llx",target_bb->answer_focus->v);
-									arg[0]=-1;//signal that we have answer, fetch it from target_bb->answer_focus;
-									return 1;
-								}
+				if(target_bb->c_focus->pos_focus){
+					target_bb->c_focus->pos_focus->fuzz_cnt++;
+					arg[0]=10;
+					arg[1]=target_bb->c_focus->pos_focus->pos;
+					OKF("Set pos:0x%x",arg[1]);
+					return 1;
+				}else{
+					OKF("Finish type detection!");
+					OKF("target_bb: %s,rid=%d",target_bb->node->bbname,target_bb->node->rid);
+					target_bb->solving_stage=RANDOM;
+					if(target_bb->node->branch_type==UNKNOWN){
+						target_bb->node->branch_type=STATE_BASED;
+						FATAL("target_bb:%s is a state based target",target_bb->node->bbname);
+					}else if(target_bb->node->branch_type==FIELD_BASED){
+						//if(target_bb->c_focus->eff_pos_list.head->answer)
+						if(target_bb->node->answer_str){
+							target_bb->solving_stage=ANSWER;
+							OKF("ANSWER_STR:%s",target_bb->node->answer_str);
+							if(init_answer_list(target_bb->node->answer_str)>0){
+								display_value_list(&target_bb->answer_list);
+								target_bb->answer_focus=target_bb->answer_list.head;
+								OKF("v=%llx",target_bb->answer_focus->v);
+								arg[0]=-1;//signal that we have answer, fetch it from target_bb->answer_focus;
+								return 1;
 							}
 						}
-						goto monitor;
 					}
+					//goto monitor;
 				}
-				if(!target_bb->c_focus->pos_focus)
-					FATAL("This should not happen!");
-				arg[0]=10;
-				arg[1]=target_bb->c_focus->pos_focus->pos;
-				OKF("Set pos:0x%x",arg[1]);
-				return 1;
 			}else if(target_bb->solving_stage==ANSWER){
 				target_bb->answer_focus=target_bb->answer_focus->next;
 				if(target_bb->answer_focus){
@@ -7151,6 +7146,7 @@ static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 				}else{
 					target_bb->solving_stage=RANDOM;
 				}
+				//goto monitor;
 			}
 		}
 monitor:
