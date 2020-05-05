@@ -110,6 +110,13 @@ protected:
 	std::string getAnswerICmp(ICmpInst * ICmp);
 	std::string getAnswerSwitch(SwitchInst * SI, std::map<std::string, int> bb_to_dis, std::vector < std::string > basic_blocks);
 	void bbBranchRecord(std::string key_str,BasicBlock &BB, std::ofstream &bb_branch_info, std::map<std::string, int> bb_to_dis, std::vector < std::string > basic_blocks);
+
+	int handleStrCmp(ICmpInst *ICmp, GlobalVariable *AFLMapPtr,
+			GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
+			unsigned int cur_loc);
+
+	StringRef getStringInStrCmp(ICmpInst *ICmp);
+
 	void handleGetElementPtrInst(Value *insert_point, GetElementPtrInst * GEPI, GlobalVariable *AFLMapPtr,
 			GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
 			unsigned int cur_loc);
@@ -243,12 +250,16 @@ std::string AFLCoverage::getAnswerICmp(ICmpInst * ICmp){
 	Value * op1 = ICmp->getOperand(1);
 	ConstantInt * consop0 = dyn_cast < ConstantInt > (op0);
 	ConstantInt * consop1 = dyn_cast < ConstantInt > (op1);
+	StringRef sr= getStringInStrCmp(ICmp);
+	if(StringRef("").compare(sr)){
+		return "\""+sr.str()+"\"";
+	}
 	std::string result="";
 	std::stringstream ss;
 	if((!consop0)&&consop1){
 		ss<<consop1->getZExtValue();
 	}else if(consop0&&(!consop1)){
-		ss<<consop1->getZExtValue();
+		ss<<consop0->getZExtValue();
 	}
 	ss>>result;
 	return result;
@@ -439,6 +450,89 @@ void AFLCoverage::handleFCmpInst(Value *insert_point, FCmpInst * FCmp, GlobalVar
 	//Value * op1 = FCmp->getOperand(1);
 
 }
+StringRef AFLCoverage::getStringInStrCmp(ICmpInst *ICmp) {
+	if(ICmpInst::ICMP_EQ==ICmp->getPredicate()||ICmpInst::ICMP_NE==ICmp->getPredicate())
+	{
+		Value * op0 = ICmp->getOperand(0);
+		Value * op1 = ICmp->getOperand(1);
+		ConstantInt * c0 = dyn_cast < ConstantInt > (op0);
+		ConstantInt * c1 = dyn_cast < ConstantInt > (op1);
+		Value *op=NULL;
+		if(!c0 && c1 && c1->getZExtValue()==0){
+			op=op0;
+		}else if(!c1 && c0 && c0->getZExtValue()==0){
+			op=op1;
+		}
+		if(op){
+			if(CallInst * CI = dyn_cast < CallInst > (op)){
+				Function *func = CI->getCalledFunction();
+				if (func && 0==func->getName().compare(StringRef("strcmp"))){
+					Value * arg0=CI->getArgOperand(0);
+					Value * arg1=CI->getArgOperand(1);
+					ConstantExpr  * const_expr0 = dyn_cast < ConstantExpr > (arg0);
+					ConstantExpr  * const_expr1 = dyn_cast < ConstantExpr > (arg1);
+					ConstantExpr  * const_expr=NULL;
+					if(const_expr0&&!const_expr1){
+						const_expr=const_expr0;
+					}else if(const_expr1&&!const_expr0){
+						const_expr=const_expr1;
+					}
+					if(const_expr){
+						Instruction * inst_expr=const_expr->getAsInstruction();
+						if(GetElementPtrInst  * CIST = dyn_cast < GetElementPtrInst > (inst_expr)){
+							Value * const_str=CIST->getPointerOperand();
+							if (GlobalVariable *GV = dyn_cast<GlobalVariable>(const_str)){
+								Constant *v = GV->getInitializer();
+								if (ConstantDataArray *CA = dyn_cast<ConstantDataArray>(v)) {
+									if(CA->isCString()){
+										return CA->getAsCString();
+									}
+								}
+							}
+						}
+					}
+				}//else it is a indirect call
+			}
+		}
+	}
+	return StringRef("");
+}
+int AFLCoverage::handleStrCmp(ICmpInst *ICmp, GlobalVariable *AFLMapPtr,
+		GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
+		unsigned int cur_loc) {
+	Value * op0 = ICmp->getOperand(0);
+	Value * op1 = ICmp->getOperand(1);
+	ConstantInt * c0 = dyn_cast < ConstantInt > (op0);
+	ConstantInt * c1 = dyn_cast < ConstantInt > (op1);
+	Value *op=NULL;
+	if(!c0 && c1 && c1->getZExtValue()==0){
+		op=op0;
+	}else if(!c1 && c0 && c0->getZExtValue()==0){
+		op=op1;
+	}
+	if(op){
+		if(CallInst * CI = dyn_cast < CallInst > (op)){
+			Function *func = CI->getCalledFunction();
+			if (func && 0==func->getName().compare(StringRef("strcmp"))){
+				Value * arg0=CI->getArgOperand(0);
+				Value * arg1=CI->getArgOperand(1);
+				ConstantExpr  * const_expr0 = dyn_cast < ConstantExpr > (arg0);
+				ConstantExpr  * const_expr1 = dyn_cast < ConstantExpr > (arg1);
+				GetElementPtrInst  * GEPI=NULL;
+				if(const_expr0&&!const_expr1){
+					GEPI = dyn_cast < GetElementPtrInst > (arg1);
+				}else if(const_expr1&&!const_expr0){
+					GEPI = dyn_cast < GetElementPtrInst > (arg0);
+				}
+				if(GEPI){
+					GEPI->getPointerOperand();
+					//accumulate all the Char!='\0' to the target memory
+				}
+			}
+		}
+	}
+	return 0;
+}
 void AFLCoverage::handleICmpInst(Value *insert_point, ICmpInst * ICmp, GlobalVariable *AFLMapPtr,
 		GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
 		unsigned int cur_loc) {
@@ -449,7 +543,10 @@ void AFLCoverage::handleICmpInst(Value *insert_point, ICmpInst * ICmp, GlobalVar
 	Constant * consop0 = dyn_cast < Constant > (op0);
 	Constant * consop1 = dyn_cast < Constant > (op1);
 
-	if((!consop0)&&consop1){
+
+	if(handleStrCmp(ICmp, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc)){
+
+	}else if((!consop0)&&consop1){
 		mapValue2(insert_point, op0, op1, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
 	}else if(consop0&&(!consop1)){
 		mapValue2(insert_point, op1, op0, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
@@ -661,7 +758,7 @@ void AFLCoverage::mapValue2(Value *insert_point, Value *v,Value *v1, GlobalVaria
 
 	LLVMContext &C = M.getContext();
 	//IntegerType *Int8Ty  = IntegerType::getInt8Ty(C);
-	//IntegerType *Int32Ty = IntegerType::getInt32Ty(C);
+	IntegerType *Int32Ty = IntegerType::getInt32Ty(C);
 	IntegerType *Int64Ty = IntegerType::getInt64Ty(C);
 	BasicBlock::iterator IP = BB.getFirstInsertionPt();
 	BasicBlock::iterator InsertIP=IP;
@@ -709,26 +806,10 @@ void AFLCoverage::mapValue2(Value *insert_point, Value *v,Value *v1, GlobalVaria
 #endif
 	pre_v->setMetadata(M.getMDKindID("nosanitize"),MDNode::get(C, None));
 	debug(pre_v,"pre_v\t");
-	//Value * shled_prev=IRB.CreateShl(pre_v,ConstantInt::get(LargestType, 1));
-	//Value * casted_v=IRB.CreateZExt(v,LargestType);
-	//debug(casted_v,"casted_v\t");
-
-	//Value * shled_v=IRB.CreateShl(casted_v,lattice);
-	//if(flag)debug(shled_v,"shled_v\t");
-	//Value * new_v = IRB.CreateXor(shled_v, pre_v);
-	//Value * new_v = IRB.CreateXor(casted_v,shled_prev);
-	//debug(new_v,"new_v\t");
 
 	Value * casted_v=IRB.CreateZExt(v,LargestType);
 	Value * casted_v1=IRB.CreateZExt(v1,LargestType);
 	Value * sub=IRB.CreateSub(casted_v1,casted_v);
-
-
-#ifdef __x86_64__
-	lattice=(lattice+8)%64;
-#else
-	lattice=(lattice+8)%32;
-#endif
 
 
 	StoreInst *myStore = IRB.CreateStore(sub, MapValuePtr);//ConstantInt::get(LargestType, instrument_cnt)
