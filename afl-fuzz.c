@@ -4348,6 +4348,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 	if (queue_cur->exec_path_len==0){
 		queue_cur->exec_path_len=cur_trace_len;//refer has_new_bits() for its calculation
 		if(update_margin_bbs(len)){
+			mut_prior_mode=1;
 			add_candidate(queue_cur,cur[target_bb->node->rid]);
 			//set base_value for candidate under focus
 		}
