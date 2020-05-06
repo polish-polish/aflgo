@@ -14,6 +14,8 @@ fi
 TIME=2m
 if [ "$TARGET" == "entry" ] ; then
 	TIME=1m
+elif [ "$TARGET" == "strcmp" ] ; then
+	TIME=1m
 elif [ "$TARGET" == "regex" ] ; then
 	TIME=2m
 elif [ "$TARGET" == "maze" ] ; then
@@ -31,6 +33,8 @@ if [ "$2" != "-" ] ; then
 	mkdir $TMP_DIR
 	if [ "$TARGET" == "entry" ] ; then
 		echo "entry.c:47"> $TMP_DIR/BBtargets.txt
+	elif [ "$TARGET" == "strcmp" ] ; then
+		echo "strcmp.c:28"> $TMP_DIR/BBtargets.txt
 	elif [ "$TARGET" == "regex" ] ; then
 		echo "regex.c:88"> $TMP_DIR/BBtargets.txt
 	elif [ "$TARGET" == "maze" ] ; then
@@ -79,36 +83,40 @@ if [ "$2" != "-" ] ; then
 	if [ "$TARGET" == "entry" ] ; then
 		echo "whoamiwhoamiwhoami"> $DIR_IN/words 
 		#valid answer e.g. "_ _ _ _bai"
+	elif [ "$TARGET" == "strcmp" ] ; then
+		echo "whoami"> $DIR_IN/words
+		#valid answer e.g. "apple"
 	elif [ "$TARGET" == "regex" ] ; then
 		echo "abc"> $DIR_IN/words
 		#echo "*a.^b\$c"> $DIR_IN/words
 		#valid answer e.g. ".*"
 	elif [ "$TARGET" == "maze" ] ; then
-		echo ""> $DIR_IN/words               
-		#echo "wwaassdd"> $DIR_IN/words 
-		#echo "ssssddddwwaawwddddssssddwww1"> $DIR_IN/words1
-		#echo "ssssddddwwaawwddddsdd1"> $DIR_IN/words2 
-		#echo "sddwddddssssddwww1"> $DIR_IN/words3 
-		#echo "sddwddddsdd1"> $DIR_IN/words4 
+		#echo ""> $DIR_IN/words               
+		echo "wwaassdd"> $DIR_IN/words 
+		#echo "ssssddddwwaawwddddssssddwwww"> $DIR_IN/words1
+		#echo "ssssddddwwaawwddddsddw"> $DIR_IN/words2 
+		#echo "sddwddddssssddwwww"> $DIR_IN/words3 
+		#echo "sddwddddsddw"> $DIR_IN/words4 
 		#good seed: 36s:wwaassdd,6min:ssswwaawwddddssssddwww
 		#valid answer e.g. "ssssddddwwaawwddddssssddwwww" "ssssddddwwaawwddddsddwwdwww" "sddwddddsddwdw" "ssssddddwwaawwddddsddwdw"
 	fi
 	rm -rf $DIR_OUT
-        
 fi
 
-ITER=20
+ITER=1
 if [ "$TARGET" == "maze" ] ; then
+rm -rf $DIR_OUT/../${TARGET}_*_result
 for((i=1;i<=$((ITER));i++));  
 do
 #gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -x $SUBJECT/maze.dict -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
 /usr/bin/time -a -o time.maze.txt $AFLGO/afl-fuzz -S ${TARGET}_$((i))_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -x $SUBJECT/maze.dict -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
-mv $DIR_OUT/${TARGET}_$((i))_result  $DIR_OUT/../
+mv $DIR_OUT/${TARGET}_$((i))_result  $DIR_OUT/../${TARGET}_$((i))_result
 done
 mv $DIR_OUT/../${TARGET}_*_result  $DIR_OUT/
 else
 #gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
 /usr/bin/time -a -o time.txt $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
+#echo fine
 fi
 
 
