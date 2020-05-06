@@ -4389,7 +4389,8 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 								OKF("GUESS VALUE:0x%x",*(p->answer));
 								OKF("ANSWER_STR:%s",target_bb->node->answer_str);
 							}
-							if(is_bijection_maped(p)){
+							if(is_bijection_maped(p)){//TODO:handle the case of strcmp
+								//handle the one char comparison
 								Strategy *s=get_strategy(queue_cur->exec_path_len);
 								record_value_changing_mutation(&target_bb->node,1,s);
 							}
@@ -7128,6 +7129,10 @@ static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 						if(target_bb->node->answer_str){
 							target_bb->solving_stage=ANSWER;
 							OKF("ANSWER_STR:%s",target_bb->node->answer_str);
+							if(strstr(target_bb->node->answer_str,"\"")){
+								arg[0]=-2;//signal that we have string answer;
+								return 1;
+							}
 							if(init_answer_list(target_bb->node->answer_str)>0){
 								display_value_list(&target_bb->answer_list);
 								target_bb->answer_focus=target_bb->answer_list.head;
@@ -7140,7 +7145,9 @@ static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 					//goto monitor;
 				}
 			}else if(target_bb->solving_stage==ANSWER){
-				target_bb->answer_focus=target_bb->answer_focus->next;
+				if(target_bb->answer_focus){
+					target_bb->answer_focus=target_bb->answer_focus->next;
+				}
 				if(target_bb->answer_focus){
 					arg[0]=-1;//signal that we have answer, fetch it from target_bb->answer_focus;
 					return 1;
@@ -8492,7 +8499,7 @@ havoc_stage:
 			 linear_search=1;
     	 }else{
     	     linear_search=dispatch_random(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0),temp_len,arg);
-    	     if(arg[0]==-1){
+    	     if(arg[0]==-1){//handle char answer
 
     	    	 if(target_bb->solving_stage!=ANSWER||target_bb->node->branch_type!=FIELD_BASED){
     	    		 FATAL("This should not happen!!");
@@ -8501,6 +8508,37 @@ havoc_stage:
 
     	    	 out_buf[target_bb->c_focus->eff_pos_list.head->pos]=(u8)target_bb->answer_focus->v;
     	    	 //out_buf[target_bb->c_focus->eff_pos_list.head->pos]=*(target_bb->c_focus->eff_pos_list.head->answer);
+    	     }else if(arg[0]==-2){//handle string answer
+
+    	    	 int insert_at=target_bb->c_focus->eff_pos_list.head->pos;
+    	    	 int answer_len=strlen(target_bb->node->answer_str)-2;//"apple"
+    	    	 u8  back_char=out_buf[temp_len-1];
+    	    	 out_buf[temp_len-1]='\0';
+    	    	 int origin_len=strlen(out_buf+insert_at);
+    	    	 if(origin_len==temp_len-1){
+    	    		 if(back_char!='\0'){
+    	    			 origin_len=0;
+    	    		 }
+    	    	 }
+    	    	 out_buf[temp_len-1]=back_char;
+    	    	 OKF("temp_len=%d,origin_len=%d,insert_at=%d",temp_len,origin_len,insert_at);
+    	    	 u8* new_buf = ck_alloc_nozero(temp_len + answer_len-origin_len);
+
+				 /* Head */
+				 memcpy(new_buf, out_buf, insert_at);
+				 /* Inserted part */
+				 memcpy(new_buf + insert_at, target_bb->node->answer_str+1, answer_len);
+				 *(new_buf + insert_at + answer_len)='\0';
+				 /* Tail */
+				 memcpy(new_buf + insert_at + answer_len + 1, out_buf + insert_at + origin_len+1,
+						temp_len - insert_at - origin_len);
+
+				 ck_free(out_buf);
+				 out_buf   = new_buf;
+				 temp_len += answer_len-origin_len;
+				 OKF("String answering:%s",target_bb->node->answer_str);
+				 //FATAL("%s",new_buf + insert_at);
+
     	     }
     	 }
     	 if(linear_search){//||target_bb->scanning_tasks||target_bb->solving_stage==JUDGE

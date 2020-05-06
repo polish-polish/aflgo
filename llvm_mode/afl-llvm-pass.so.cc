@@ -102,6 +102,9 @@ protected:
 	void mapValue2(Value *insert_point, Value *v, Value *v1, GlobalVariable *AFLMapPtr,
 				GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
 				unsigned int cur_loc);
+	void mapValue3(Value *insert_point, GetElementPtrInst *GEP, GlobalVariable *AFLMapPtr,
+					GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
+					unsigned int cur_loc);
 	size_t hashName(Value *v);
 	void debug(Value *v,std::string info="#Value#--");
 	std::string getBBName(BasicBlock &BB);
@@ -485,6 +488,7 @@ StringRef AFLCoverage::getStringInStrCmp(ICmpInst *ICmp) {
 								Constant *v = GV->getInitializer();
 								if (ConstantDataArray *CA = dyn_cast<ConstantDataArray>(v)) {
 									if(CA->isCString()){
+										OKF("DETECT STRCMP:%s",CA->getAsCString().str().c_str());
 										return CA->getAsCString();
 									}
 								}
@@ -526,6 +530,9 @@ int AFLCoverage::handleStrCmp(ICmpInst *ICmp, GlobalVariable *AFLMapPtr,
 				}
 				if(GEPI){
 					GEPI->getPointerOperand();
+					OKF("#mapValue3#");
+					mapValue3(CI, GEPI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+					return 1;
 					//accumulate all the Char!='\0' to the target memory
 				}
 			}
@@ -758,7 +765,7 @@ void AFLCoverage::mapValue2(Value *insert_point, Value *v,Value *v1, GlobalVaria
 
 	LLVMContext &C = M.getContext();
 	//IntegerType *Int8Ty  = IntegerType::getInt8Ty(C);
-	IntegerType *Int32Ty = IntegerType::getInt32Ty(C);
+	//IntegerType *Int32Ty = IntegerType::getInt32Ty(C);
 	IntegerType *Int64Ty = IntegerType::getInt64Ty(C);
 	BasicBlock::iterator IP = BB.getFirstInsertionPt();
 	BasicBlock::iterator InsertIP=IP;
@@ -813,6 +820,69 @@ void AFLCoverage::mapValue2(Value *insert_point, Value *v,Value *v1, GlobalVaria
 
 
 	StoreInst *myStore = IRB.CreateStore(sub, MapValuePtr);//ConstantInt::get(LargestType, instrument_cnt)
+	myStore->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+	debug(myStore,"myStore\t");
+
+}
+void AFLCoverage::mapValue3(Value *insert_point, GetElementPtrInst *GEP, GlobalVariable *AFLMapPtr,
+		GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
+		unsigned int cur_loc) {
+
+	LLVMContext &C = M.getContext();
+	IntegerType *Int8Ty  = IntegerType::getInt8Ty(C);
+	//IntegerType *Int32Ty = IntegerType::getInt32Ty(C);
+	IntegerType *Int64Ty = IntegerType::getInt64Ty(C);
+	BasicBlock::iterator IP = BB.getFirstInsertionPt();
+	BasicBlock::iterator InsertIP=IP;
+    ///debug(v,"Value to store");
+	int flag=1;
+    for(int i=0;IP!= BB.end();IP++,i++)
+	{
+		///std::string info_str;
+		///llvm::raw_string_ostream rso(info_str);
+		///rso<<"BBInst["<<i<<"]";
+		///debug(&(*IP),rso.str());
+		if (&(*IP) == insert_point){
+			InsertIP = IP;flag=0;
+			break;
+		}
+	}
+    //IRBuilder<> IRB(&(*InsertIP));
+    IRBuilder<> IRB((Instruction *)insert_point);
+	//use Int64Ty
+	/* Load SHM pointer */
+
+	LoadInst *MapPtr = IRB.CreateLoad(AFLMapPtr);
+	MapPtr->setMetadata(M.getMDKindID("nosanitize"),MDNode::get(C, None));
+	if(flag)
+	debug(MapPtr,"MapPtr\t");
+
+#ifdef __x86_64__
+	IntegerType *LargestType = Int64Ty;
+	ConstantInt *Offset = ConstantInt::get(LargestType, MAP_SIZE +16+(cur_loc<<3));
+#else
+	IntegerType *LargestType = Int32Ty;
+	ConstantInt *Offset = ConstantInt::get(LargestType, MAP_SIZE +16+(cur_loc<<2));
+#endif
+
+	Value *_MapValuePtr = IRB.CreateGEP(MapPtr, Offset);
+	ConstantInt *Zero=ConstantInt::get(LargestType, 0);
+	Value *MapValuePtr = IRB.CreateGEP(LargestType, _MapValuePtr, Zero);
+	if(flag)debug(MapValuePtr,"MapValuePtr\t");
+
+#ifdef LLVM_OLD_DEBUG_API
+	LoadInst * pre_v = IRB.CreateLoad(MapValuePtr);
+	pre_v->mutateType(LargestType);
+#else
+	LoadInst * pre_v = IRB.CreateLoad(LargestType,MapValuePtr);
+#endif
+	pre_v->setMetadata(M.getMDKindID("nosanitize"),MDNode::get(C, None));
+	debug(pre_v,"pre_v\t");
+
+
+	LoadInst * ch = IRB.CreateLoad(Int8Ty,GEP);
+
+	StoreInst *myStore = IRB.CreateStore(ch, MapValuePtr);//ConstantInt::get(LargestType, instrument_cnt)
 	myStore->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
 	debug(myStore,"myStore\t");
 
