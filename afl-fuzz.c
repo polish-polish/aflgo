@@ -3911,6 +3911,7 @@ static int update_margin_bbs(int len)
 								target_bb->max_len=len>target_bb->max_len?len:target_bb->max_len;
 								target_bb->born_cycle=queue_cycle;
 								strcpy(target_bb->function,fname);
+								OKF("len=%d",len);
 								updated=1;
 							}
 
@@ -4134,6 +4135,7 @@ static void add_position(LinkListPosition * pos_list,int pos){
 static void add_candidate(struct queue_entry * entry, u64 v){
 	Candidate * c=(Candidate *)malloc(sizeof(Candidate));
 	c->entry=entry;
+	OKF("ADD entry len=%d",entry->len);
 	c->fuzz_pos=0;
 	c->base_value=v;
 	c->pos_focus=NULL;
@@ -4274,7 +4276,7 @@ static inline int affect_two(LinkedPosition *p){
 /* each different input trigger different out put */
 static inline int is_bijection_maped(LinkedPosition *p){
 	OKF("LETS CHECK FMAP and its uniqueness");
-	display_fmap(target_bb->c_focus->pos_focus);//lets check the result
+	display_fmap(p);//lets check the result
 	int valid_cnt=0;
 	for(int i=0;i<FMAP_LEN;i++){
 		if(p->fmap[i].valid){
@@ -4454,7 +4456,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
 		if ((target_bb->node && target_bb->node->branch_type==STATE_BASED)||updated){
 			cleanup_value_changing_mutation_record();
-			WARNF("clean UP!");
+			WARNF("Target Updated. Clean Up!");
 		}
     }
     /* add by yangke end */
@@ -7069,11 +7071,11 @@ static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 		if(target_bb->c_focus){
 			if(target_bb->solving_stage==SCAN){// || target_bb->scanning_tasks>0 && target_bb->c_focus->fuzz_pos>=0){
 				//linear search to attack this branch
-				if(0<=target_bb->c_focus->fuzz_pos && target_bb->c_focus->fuzz_pos <len){
+				if(0<=target_bb->c_focus->fuzz_pos && target_bb->c_focus->fuzz_pos <len+2){
 					arg[0]=10;
 					arg[1]=target_bb->c_focus->fuzz_pos++;
 					return 1;
-				}else if(target_bb->c_focus->fuzz_pos >= len){
+				}else if(target_bb->c_focus->fuzz_pos >= len+2){
 					arg[1]=target_bb->c_focus->fuzz_pos=-1;
 					target_bb->scanning_tasks=0;
 					LinkedPosition *p=target_bb->c_focus->eff_pos_list.head;
@@ -7098,7 +7100,7 @@ static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 			}
 			if(target_bb->solving_stage==JUDGE){
 				if(target_bb->c_focus->pos_focus->fuzz_cnt>=FMAP_LEN){
-					display_fmap(target_bb->c_focus->pos_focus);//lets check the result
+					//display_fmap(target_bb->c_focus->pos_focus);//lets check the result
 					LinkedPosition *p=target_bb->c_focus->pos_focus;
 					target_bb->c_focus->pos_focus=target_bb->c_focus->pos_focus->next;
 					if(is_bijection_maped(p)){
@@ -7110,7 +7112,6 @@ static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 						OKF("after delete eff_pos_list.len=%d",target_bb->c_focus->eff_pos_list.len);
 					}
 				}
-
 				if(target_bb->c_focus->pos_focus){
 					target_bb->c_focus->pos_focus->fuzz_cnt++;
 					arg[0]=10;
@@ -8500,44 +8501,70 @@ havoc_stage:
     	 }else{
     	     linear_search=dispatch_random(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0),temp_len,arg);
     	     if(arg[0]==-1){//handle char answer
-
+    	    	 int pos=target_bb->c_focus->eff_pos_list.head->pos;
     	    	 if(target_bb->solving_stage!=ANSWER||target_bb->node->branch_type!=FIELD_BASED){
     	    		 FATAL("This should not happen!!");
     	    	 }
-    	    	 OKF("ANSWER:mem[0x%x]=0x%x",target_bb->c_focus->eff_pos_list.head->pos,(u8)target_bb->answer_focus->v);
+    	    	 OKF("ANSWER:mem[0x%x]=0x%x",pos,(u8)target_bb->answer_focus->v);
 
-    	    	 out_buf[target_bb->c_focus->eff_pos_list.head->pos]=(u8)target_bb->answer_focus->v;
+    	    	 if(pos>=temp_len){
+    	    		 u8* new_buf = ck_alloc_nozero(pos+1);
+					 memcpy(new_buf,out_buf,temp_len);
+					 if(pos==temp_len+1)
+						 new_buf[temp_len]='\0';
+					 temp_len=pos+1;
+    	    	 }
+    	    	 out_buf[pos]=(u8)target_bb->answer_focus->v;
     	    	 //out_buf[target_bb->c_focus->eff_pos_list.head->pos]=*(target_bb->c_focus->eff_pos_list.head->answer);
     	     }else if(arg[0]==-2){//handle string answer
 
     	    	 int insert_at=target_bb->c_focus->eff_pos_list.head->pos;
     	    	 int answer_len=strlen(target_bb->node->answer_str)-2;//"apple"
-    	    	 u8  back_char=out_buf[temp_len-1];
-    	    	 out_buf[temp_len-1]='\0';
-    	    	 int origin_len=strlen(out_buf+insert_at);
-    	    	 if(origin_len==temp_len-1){
-    	    		 if(back_char!='\0'){
-    	    			 origin_len=0;
-    	    		 }
+    	    	 if(insert_at>=temp_len){
+    	    		 OKF("yes!!,find pos:%d",insert_at);
+    	    		 u8* new_buf = ck_alloc_nozero(insert_at+answer_len+1);
+    	    		 memcpy(new_buf,out_buf,temp_len);
+    	    		 if(insert_at==temp_len+1)
+    	    			 new_buf[temp_len]='\0';
+    	    		 memcpy(new_buf+insert_at,target_bb->node->answer_str+1,answer_len);
+    	    		 temp_len=insert_at+answer_len+1;
+    	    		 new_buf[temp_len-1]='\0';
+    	    		 ck_free(out_buf);
+    	    		 out_buf = new_buf;
+    	    		 OKF("%s,%s,%s",out_buf,out_buf+6,out_buf+insert_at);
+    	    	 }else{
+    	    		 u8  back_char=out_buf[temp_len-1];
+					 out_buf[temp_len-1]='\0';
+					 int origin_len=strlen(out_buf+insert_at);
+					 if(origin_len==temp_len-insert_at-1){
+						 if(back_char!='\0'){
+							 origin_len=0;
+						 }
+					 }
+					 out_buf[temp_len-1]=back_char;
+					 OKF("temp_len=%d,origin_len=%d,insert_at=%d",temp_len,origin_len,insert_at);
+					 OKF("new_buf_len=%d",temp_len + answer_len-origin_len +1);
+					 u8* new_buf = ck_alloc_nozero(temp_len + answer_len-origin_len);
+
+					 /* Head */
+					 memcpy(new_buf, out_buf, insert_at);
+					 OKF("%s",new_buf);
+					 /* Inserted part */
+					 memcpy(new_buf + insert_at, target_bb->node->answer_str+1, answer_len);
+					 *(new_buf + insert_at + answer_len)='\0';
+					 OKF("%s",new_buf+insert_at);
+					 /* Tail */
+					 memcpy(new_buf + insert_at + answer_len + 1, out_buf + insert_at + origin_len+1,
+							temp_len - insert_at - origin_len-1);
+					 OKF("%s",new_buf + insert_at + answer_len +1);
+
+					 ck_free(out_buf);
+					 out_buf   = new_buf;
+					 temp_len += answer_len-origin_len;//add an position for further detection
+					 OKF("String answering:%s",target_bb->node->answer_str);
+					 //FATAL("%s",new_buf + insert_at);
     	    	 }
-    	    	 out_buf[temp_len-1]=back_char;
-    	    	 OKF("temp_len=%d,origin_len=%d,insert_at=%d",temp_len,origin_len,insert_at);
-    	    	 u8* new_buf = ck_alloc_nozero(temp_len + answer_len-origin_len);
 
-				 /* Head */
-				 memcpy(new_buf, out_buf, insert_at);
-				 /* Inserted part */
-				 memcpy(new_buf + insert_at, target_bb->node->answer_str+1, answer_len);
-				 *(new_buf + insert_at + answer_len)='\0';
-				 /* Tail */
-				 memcpy(new_buf + insert_at + answer_len + 1, out_buf + insert_at + origin_len+1,
-						temp_len - insert_at - origin_len);
-
-				 ck_free(out_buf);
-				 out_buf   = new_buf;
-				 temp_len += answer_len-origin_len;
-				 OKF("String answering:%s",target_bb->node->answer_str);
-				 //FATAL("%s",new_buf + insert_at);
 
     	     }
     	 }
@@ -8825,9 +8852,20 @@ havoc_stage:
           /* add by yangke start */
           //out_buf[0x1d0]=0xff;out_buf[0x1d1]=0xff;out_buf[0x2cb]=0x1;
 
+        	//?            //arg[1]==temp_len
+        	//\0?          //arg[1]==temp_len+1
 
-          if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len)){
-			  arg[1]=UR_FIX(temp_len);
+
+          if(arg[1]>=temp_len &&  (target_bb->solving_stage==JUDGE||target_bb->solving_stage==SCAN)){
+        	  u8* new_buf = ck_alloc_nozero(arg[1]+1);
+        	  memcpy(new_buf, out_buf, temp_len);
+        	  if(arg[1]==temp_len+1)
+        		  new_buf[temp_len]='\0';
+        	  ck_free(out_buf);
+        	  out_buf=new_buf;
+        	  temp_len=arg[1]+1;
+          }else if (!mut_prior_mode||arg[1]==-1||arg[1]>=temp_len){
+				  arg[1]=UR_FIX(temp_len);
 		  }
 		  //if(arg[1]==0x1d1)FATAL("Find it");
           //if(linear_search)arg[1]=0x1d1;
@@ -8841,8 +8879,10 @@ havoc_stage:
 			  out_buf[arg[1]]=unique_judge_value(out_buf[arg[1]]);
 			  OKF("JUDGE:mem[0x%x]=0x%x",arg[1],out_buf[arg[1]]);
 		  }else if(target_bb->scanning_tasks>0 || target_bb->solving_stage==SCAN){
+			  OKF("SCAN temp_len=%d",temp_len);
 			  OKF("SCAN:mem[0x%x]=0x%x",arg[1],out_buf[arg[1]]);
 		  }
+
 
 //          if(linear_search){
 //          	  out_buf[0x1d0]=0xff;out_buf[0x1d1]=0xff;out_buf[0x2cb]=0x1;
@@ -9108,7 +9148,8 @@ havoc_stage:
 
     /* out_buf might have been mangled a bit, so let's restore it to its
        original size and shape. */
-
+    if(temp_len==14)
+    	OKF("temp_len=%d,len=%d",temp_len,len);
     if (temp_len < len) out_buf = ck_realloc(out_buf, len);
     temp_len = len;
     memcpy(out_buf, in_buf, len);

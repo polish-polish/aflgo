@@ -34,7 +34,7 @@ if [ "$2" != "-" ] ; then
 	if [ "$TARGET" == "entry" ] ; then
 		echo "entry.c:47"> $TMP_DIR/BBtargets.txt
 	elif [ "$TARGET" == "strcmp" ] ; then
-		echo "strcmp.c:28"> $TMP_DIR/BBtargets.txt
+		echo "strcmp.c:31"> $TMP_DIR/BBtargets.txt
 	elif [ "$TARGET" == "regex" ] ; then
 		echo "regex.c:88"> $TMP_DIR/BBtargets.txt
 	elif [ "$TARGET" == "maze" ] ; then
@@ -114,8 +114,8 @@ mv $DIR_OUT/${TARGET}_$((i))_result  $DIR_OUT/../${TARGET}_$((i))_result
 done
 mv $DIR_OUT/../${TARGET}_*_result  $DIR_OUT/
 else
-#gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
-/usr/bin/time -a -o time.txt $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
+gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
+#/usr/bin/time -a -o time.txt $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
 #echo fine
 fi
 

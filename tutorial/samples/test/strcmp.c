@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#define SEC_LEN 18
+#define SEC_LEN 27
 
 int main(int argc, char** argv)
 {
@@ -24,9 +24,15 @@ int main(int argc, char** argv)
      sum+=*p++;
   }
   if(strcmp(local,"apple")==0){
-	//strcpy(local2,local);
-	printf("%ld,sum=%d",strchr(local,'\0')-local,sum);
-	abort();
+	if(strcmp(local+6,"banana")==0){
+		if(strcmp(local+13,"12")==0){
+			if(strcmp(local+16,"")==0){
+				//strcpy(local2,local);
+				printf("%ld,sum=%d",strchr(local,'\0')-local,sum);
+				abort();
+			}
+		}
+	}
   }
   return 0;
 }
