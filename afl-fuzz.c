@@ -3911,7 +3911,6 @@ static int update_margin_bbs(int len)
 								target_bb->max_len=len>target_bb->max_len?len:target_bb->max_len;
 								target_bb->born_cycle=queue_cycle;
 								strcpy(target_bb->function,fname);
-								OKF("len=%d",len);
 								updated=1;
 							}
 
@@ -4135,7 +4134,6 @@ static void add_position(LinkListPosition * pos_list,int pos){
 static void add_candidate(struct queue_entry * entry, u64 v){
 	Candidate * c=(Candidate *)malloc(sizeof(Candidate));
 	c->entry=entry;
-	OKF("ADD entry len=%d",entry->len);
 	c->fuzz_pos=0;
 	c->base_value=v;
 	c->pos_focus=NULL;
@@ -4187,7 +4185,6 @@ static inline void display_value_list(LinkListInteger *v_list){
 		}
 		i=i->next;
 	}
-	OKF("value_list:{%s}",s);
 	ck_free(s);
 }
 static inline void display_fmap(LinkedPosition * p){
@@ -4275,8 +4272,6 @@ static inline int affect_two(LinkedPosition *p){
 }
 /* each different input trigger different out put */
 static inline int is_bijection_maped(LinkedPosition *p){
-	OKF("LETS CHECK FMAP and its uniqueness");
-	display_fmap(p);//lets check the result
 	int valid_cnt=0;
 	for(int i=0;i<FMAP_LEN;i++){
 		if(p->fmap[i].valid){
@@ -4285,38 +4280,31 @@ static inline int is_bijection_maped(LinkedPosition *p){
 				if(p->fmap[i].output==p->fmap[j].output
 						&& p->fmap[i].valid && p->fmap[j].valid
 						&& p->fmap[i].trace_len==p->fmap[j].trace_len){
-					OKF("!!3");
 					return 0;
 				}
 			}
 		}
 	}
 	if(valid_cnt>1){
-		OKF("!!1");
 		return 1;
 	}else{
-		OKF("!!2");
 		return 0;
 	}
 }
 static inline int is_direct_use(LinkedPosition *p){
-	OKF("LETS CHECK FMAP and its uniqueness");
-	display_fmap(target_bb->c_focus->pos_focus);//lets check the result
+
 	int valid_cnt=0;
 	for(int i=0;i<FMAP_LEN;i++){
 		if(p->fmap[i].valid){
 			valid_cnt++;
 			if((u8)p->fmap[i].input!=(u8)p->fmap[i].output){
-				OKF("!3");
 				return 0;
 			}
 		}
 	}
 	if(valid_cnt>1){
-		OKF("!1");
 		return 1;
 	}else{
-		OKF("!2");
 		return 0;
 	}
 }
@@ -4335,9 +4323,6 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
   u8  keeping = 0, res;
   u8  add_it=0;
   u64* cur = (u64*)(trace_bits+MAP_SIZE+16);
-  if(!(target_bb->node && target_bb->node->branch_type==STATE_BASED)){
-	  OKF("####");
-  }
 
   if (fault == crash_mode) {
 
@@ -4366,7 +4351,6 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 			case UNKNOWN:
 				if(target_bb->c_focus){
 					if(target_bb->scanning_tasks>0){//&& queue_cur->exec_path_len==cur_trace_len&& target_bb->c_focus
-						OKF("base/cur:%llx/%llx",target_bb->c_focus->base_value,cur[target_bb->node->rid]);
 						if(target_bb->c_focus->base_value!=cur[target_bb->node->rid]){//during scanning we find a different value
 							add_position(&target_bb->c_focus->eff_pos_list,target_bb->c_focus->fuzz_pos-1);//signal the type check after finish linear search.
 						}
@@ -4374,7 +4358,6 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 						LinkedPosition *p=target_bb->c_focus->pos_focus;
 						u8  * t=(u8 *)mem;
 						u8 answer=(u8)(t[p->pos]+cur[target_bb->node->rid]);
-						OKF("answer:0x%x=%x+%llx,%d,cur_trace_len=%d",answer,t[p->pos],cur[target_bb->node->rid],queue_cur->exec_path_len,cur_trace_len);
 						if(p->fuzz_cnt==1){
 							p->answer=(u8*)malloc(sizeof(u8));
 							*(p->answer)=answer;
@@ -4385,12 +4368,11 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 						p->fmap[p->fuzz_cnt-1].output=cur[target_bb->node->rid];
 						p->fmap[p->fuzz_cnt-1].trace_len=cur_trace_len;
 						p->fmap[p->fuzz_cnt-1].valid=1;
-						OKF("hnb:%d",hnb);
 						if(p->fuzz_cnt==FMAP_LEN){
-							if(p->answer){
-								OKF("GUESS VALUE:0x%x",*(p->answer));
-								OKF("ANSWER_STR:%s",target_bb->node->answer_str);
-							}
+//							if(p->answer){
+//								OKF("GUESS VALUE:0x%x",*(p->answer));
+//								OKF("ANSWER_STR:%s",target_bb->node->answer_str);
+//							}
 							if(is_bijection_maped(p)){//TODO:handle the case of strcmp
 								//handle the one char comparison
 								Strategy *s=get_strategy(queue_cur->exec_path_len);
@@ -4454,9 +4436,12 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 			}
 		}
 
-		if ((target_bb->node && target_bb->node->branch_type==STATE_BASED)||updated){
+		if (updated){
 			cleanup_value_changing_mutation_record();
 			WARNF("Target Updated. Clean Up!");
+		}else if(target_bb->node && target_bb->node->branch_type==STATE_BASED){
+			cleanup_value_changing_mutation_record();
+			WARNF("State Updated. Clean Up!");
 		}
     }
     /* add by yangke end */
@@ -6557,32 +6542,6 @@ static inline void  merge_record(Record* to, Record* from,Strategy *s)
 
 static inline void  record_value_changing_mutation(Node * node_list[],int size,Strategy *s)
 {
-
-	{
-		for(int i=0;i<MUT_NUM;i++)
-		{
-			if(tmp_mut_cnt[i]>0 && i==10)
-			{
-				const char *pos_str;
-				map_iter_t iter = map_iter(&tmp_pos_map[i]);
-				char * pos_list_str=NULL;
-				while ((pos_str = map_next(&tmp_pos_map[i], &iter))) {
-					int pos_cnt=*map_get(&tmp_pos_map[i], pos_str);
-					int hex_pos=atoi(pos_str);
-					OKF("pos:0x%x",hex_pos);
-					if(!pos_list_str){
-						pos_list_str=alloc_printf("%x[%d]",hex_pos,pos_cnt);
-					}else{
-						char *temp_str=pos_list_str;
-						pos_list_str=alloc_printf("%s,%x[%d]",temp_str,hex_pos,pos_cnt);
-						ck_free(temp_str);
-					}
-				}
-				OKF("%d: %s",i,pos_list_str);
-			}
-		}
-	}
-
 	if(size<=0){
 		FATAL("ridlist size must >0, cur:%d",size);
 	}
@@ -6787,7 +6746,6 @@ static inline void  record_value_changing_mutation(Node * node_list[],int size,S
 				while ((pos_str = map_next(&tmp_pos_map[i], &iter))) {
 					int pos_cnt=*map_get(&tmp_pos_map[i], pos_str);
 					int hex_pos=atoi(pos_str);
-					OKF("pos:0x%x",hex_pos);
 					if(!pos_list_str){
 						pos_list_str=alloc_printf("%x[%d]",hex_pos,pos_cnt);
 					}else{
@@ -6994,9 +6952,7 @@ static inline Record * select_record(Record *record_list)
 
 static inline int init_answer_list(char * answer_str){
 	char * answer=strdup(answer_str);
-	OKF("#%s",answer);
 	if(strstr(answer,":")){
-		OKF("SWITCH");
 		char* item=strtok(answer,",");
 		do{
 			if(!strstr(item,"-1")){
@@ -7019,12 +6975,11 @@ static inline int init_answer_list(char * answer_str){
 		insert_value(&target_bb->answer_list,more);
 		insert_value(&target_bb->answer_list,it);
 	}
-	OKF("target_bb->answer_list.len=%d",target_bb->answer_list.len);
 	return target_bb->answer_list.len;
 }
 static inline u8 unique_judge_value(u8 byte){
 	int cnt=target_bb->c_focus->pos_focus->fuzz_cnt-1;//already increased
-	OKF("fuzz_cnt:%d",cnt+1);
+	//OKF("fuzz_cnt:%d",cnt+1);
 	if(cnt<0)FATAL("cnt:%d<0",cnt);
 	int repeat;
 	do{
@@ -7079,11 +7034,7 @@ static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 					arg[1]=target_bb->c_focus->fuzz_pos=-1;
 					target_bb->scanning_tasks=0;
 					LinkedPosition *p=target_bb->c_focus->eff_pos_list.head;
-					while(p){
-						OKF("@%d",p->pos);
-						p=p->next;
-					}
-					OKF("finish linear search! len=%d, changed=%d",len,target_bb->c_focus->eff_pos_list.len);
+
 					if(target_bb->c_focus->eff_pos_list.len==0){//cannot judge it as field value based branch
 						target_bb->node->branch_type=STATE_BASED;
 						target_bb->solving_stage=RANDOM;
@@ -7100,27 +7051,20 @@ static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 			}
 			if(target_bb->solving_stage==JUDGE){
 				if(target_bb->c_focus->pos_focus->fuzz_cnt>=FMAP_LEN){
-					//display_fmap(target_bb->c_focus->pos_focus);//lets check the result
 					LinkedPosition *p=target_bb->c_focus->pos_focus;
 					target_bb->c_focus->pos_focus=target_bb->c_focus->pos_focus->next;
 					if(is_bijection_maped(p)){
 						target_bb->node->branch_type=FIELD_BASED;
-						OKF("target_bb %s is FIELD_BASED! Judged from POS:%x",target_bb->node->bbname,p->pos);
 					}else{
-						OKF("before delete eff_pos_list.len=%d",target_bb->c_focus->eff_pos_list.len);
 						delete_position(&target_bb->c_focus->eff_pos_list,p);
-						OKF("after delete eff_pos_list.len=%d",target_bb->c_focus->eff_pos_list.len);
 					}
 				}
 				if(target_bb->c_focus->pos_focus){
 					target_bb->c_focus->pos_focus->fuzz_cnt++;
 					arg[0]=10;
 					arg[1]=target_bb->c_focus->pos_focus->pos;
-					OKF("Set pos:0x%x",arg[1]);
 					return 1;
 				}else{
-					OKF("Finish type detection!");
-					OKF("target_bb: %s,rid=%d",target_bb->node->bbname,target_bb->node->rid);
 					target_bb->solving_stage=RANDOM;
 					if(target_bb->node->branch_type==UNKNOWN){
 						target_bb->node->branch_type=STATE_BASED;
@@ -7129,7 +7073,6 @@ static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 						//if(target_bb->c_focus->eff_pos_list.head->answer)
 						if(target_bb->node->answer_str){
 							target_bb->solving_stage=ANSWER;
-							OKF("ANSWER_STR:%s",target_bb->node->answer_str);
 							if(strstr(target_bb->node->answer_str,"\"")){
 								arg[0]=-2;//signal that we have string answer;
 								return 1;
@@ -7137,7 +7080,6 @@ static inline int dispatch_random(u32 range,s32 len,u32 * arg)
 							if(init_answer_list(target_bb->node->answer_str)>0){
 								display_value_list(&target_bb->answer_list);
 								target_bb->answer_focus=target_bb->answer_list.head;
-								OKF("v=%llx",target_bb->answer_focus->v);
 								arg[0]=-1;//signal that we have answer, fetch it from target_bb->answer_focus;
 								return 1;
 							}
@@ -7240,68 +7182,6 @@ random:
 	}
 	return 0;
 }
-
-
-//static int all_pos_touched=0;
-//static int all_full=0;
-
-static inline int UR_FIX(int range)
-{
-	return UR(range);/*
-	if(all_pos_touched && all_full){
-		return UR(range);
-	}
-	int pos=0;
-	int iter=0;
-	for(int find_virgin=0;!find_virgin;iter++)
-	{
-		int miss=0;
-		for(int i=0;i<margin_bb_count;i++)
-		{
-			int index=rid2index[margin_bb_rid[i]];
-			if(vertex_index[index].invalid_positions)
-			{
-				char * pos_str=alloc_printf("%d",pos);
-				int *cnt=map_get(vertex_index[index].invalid_positions, pos_str);
-				ck_free(pos_str);
-				if(!cnt){
-					return pos;
-				}else if(all_pos_touched){
-					return UR(range);
-					if(all_full){
-						return UR(range);
-					}else if(*cnt<256){
-						return pos;
-					}else{
-						pos+=1;
-						if(pos>=range)
-						{
-							all_full=1;
-							return UR(range);
-						}
-						break;
-					}
-				}else{
-					pos+=1;
-					if(pos>=range)
-					{
-						all_pos_touched=1;
-						pos=0;
-						break;
-					}
-					break;
-				}
-			}else{
-				miss++;
-			}
-		}
-		if(miss==margin_bb_count){
-			return UR(range);
-		}
-		OKF("iter:%d",iter);
-	}FATAL("DEADCODE! touched");*/
-}
-/* add by yangke end */
 
 /* Take the current entry from the queue, fuzz it for a while. This
    function is a tad too long... returns 0 if fuzzed successfully, 1 if
@@ -8505,7 +8385,6 @@ havoc_stage:
     	    	 if(target_bb->solving_stage!=ANSWER||target_bb->node->branch_type!=FIELD_BASED){
     	    		 FATAL("This should not happen!!");
     	    	 }
-    	    	 OKF("ANSWER:mem[0x%x]=0x%x",pos,(u8)target_bb->answer_focus->v);
 
     	    	 if(pos>=temp_len){
     	    		 u8* new_buf = ck_alloc_nozero(pos+1);
@@ -8521,7 +8400,6 @@ havoc_stage:
     	    	 int insert_at=target_bb->c_focus->eff_pos_list.head->pos;
     	    	 int answer_len=strlen(target_bb->node->answer_str)-2;//"apple"
     	    	 if(insert_at>=temp_len){
-    	    		 OKF("yes!!,find pos:%d",insert_at);
     	    		 u8* new_buf = ck_alloc_nozero(insert_at+answer_len+1);
     	    		 memcpy(new_buf,out_buf,temp_len);
     	    		 if(insert_at==temp_len+1)
@@ -8531,7 +8409,6 @@ havoc_stage:
     	    		 new_buf[temp_len-1]='\0';
     	    		 ck_free(out_buf);
     	    		 out_buf = new_buf;
-    	    		 OKF("%s,%s,%s",out_buf,out_buf+6,out_buf+insert_at);
     	    	 }else{
     	    		 u8  back_char=out_buf[temp_len-1];
 					 out_buf[temp_len-1]='\0';
@@ -8542,27 +8419,20 @@ havoc_stage:
 						 }
 					 }
 					 out_buf[temp_len-1]=back_char;
-					 OKF("temp_len=%d,origin_len=%d,insert_at=%d",temp_len,origin_len,insert_at);
-					 OKF("new_buf_len=%d",temp_len + answer_len-origin_len +1);
 					 u8* new_buf = ck_alloc_nozero(temp_len + answer_len-origin_len);
 
 					 /* Head */
 					 memcpy(new_buf, out_buf, insert_at);
-					 OKF("%s",new_buf);
 					 /* Inserted part */
 					 memcpy(new_buf + insert_at, target_bb->node->answer_str+1, answer_len);
 					 *(new_buf + insert_at + answer_len)='\0';
-					 OKF("%s",new_buf+insert_at);
 					 /* Tail */
 					 memcpy(new_buf + insert_at + answer_len + 1, out_buf + insert_at + origin_len+1,
 							temp_len - insert_at - origin_len-1);
-					 OKF("%s",new_buf + insert_at + answer_len +1);
 
 					 ck_free(out_buf);
 					 out_buf   = new_buf;
-					 temp_len += answer_len-origin_len;//add an position for further detection
-					 OKF("String answering:%s",target_bb->node->answer_str);
-					 //FATAL("%s",new_buf + insert_at);
+					 temp_len += answer_len-origin_len;
     	    	 }
 
 
@@ -8590,7 +8460,7 @@ havoc_stage:
           /* Flip a single bit somewhere. Spooky! */
     	  /* add by yangke start */
     	  if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len<<3)){
-    		  arg[1]=UR_FIX(temp_len << 3);
+    		  arg[1]=UR(temp_len << 3);
     	  }//else{arg[1]= (arg[1]>>3)+UR(8));}
     	  if (cycles_wo_finds >=threshold_cycles_wo_finds){
     		  record_possible_value_changing_mutation(0,arg[1]>>3);
@@ -8609,7 +8479,7 @@ havoc_stage:
 
           /* add by yangke start */
           if (!mut_prior_mode||arg[1]==-1||arg[1]>=temp_len){
-        	  arg[1]=UR_FIX(temp_len);
+        	  arg[1]=UR(temp_len);
 		  }
           if (cycles_wo_finds >=threshold_cycles_wo_finds){
         	  record_possible_value_changing_mutation(1,arg[1]);
@@ -8630,7 +8500,7 @@ havoc_stage:
           /* add by yangke start */
 
           if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len-1)){
-        	  arg[1]=UR_FIX(temp_len - 1);
+        	  arg[1]=UR(temp_len - 1);
           }
           if (cycles_wo_finds >=threshold_cycles_wo_finds){
         	  record_possible_value_changing_mutation(2,arg[1]);
@@ -8661,7 +8531,7 @@ havoc_stage:
 
           /* add by yangke start */
           if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len-3)){
-              arg[1]=UR_FIX(temp_len - 3);
+              arg[1]=UR(temp_len - 3);
           }
           if (cycles_wo_finds >=threshold_cycles_wo_finds){
         	  record_possible_value_changing_mutation(3,arg[1]);
@@ -8688,7 +8558,7 @@ havoc_stage:
 
           /* add by yangke start */
           if (!mut_prior_mode||arg[1]==-1||arg[1]>=temp_len){
-			  arg[1]=UR_FIX(temp_len);
+			  arg[1]=UR(temp_len);
 		  }
 		  if (cycles_wo_finds >=threshold_cycles_wo_finds){
 			  record_possible_value_changing_mutation(4,arg[1]);
@@ -8704,7 +8574,7 @@ havoc_stage:
 
           /* add by yangke start */
           if (!mut_prior_mode||arg[1]==-1||arg[1]>=temp_len){
-			  arg[1]=UR_FIX(temp_len);
+			  arg[1]=UR(temp_len);
 		  }
 		  if (cycles_wo_finds >=threshold_cycles_wo_finds){
 			  record_possible_value_changing_mutation(5,arg[1]);
@@ -8721,7 +8591,7 @@ havoc_stage:
           if (temp_len < 2) break;
           /* add by yangke start */
           if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len-1)){
-			  arg[1]=UR_FIX(temp_len-1);
+			  arg[1]=UR(temp_len-1);
 		  }
 		  if (cycles_wo_finds >=threshold_cycles_wo_finds){
 			  record_possible_value_changing_mutation(6,arg[1]);
@@ -8754,7 +8624,7 @@ havoc_stage:
 
           /* add by yangke start */
           if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len-1)){
-			  arg[1]=UR_FIX(temp_len-1);
+			  arg[1]=UR(temp_len-1);
 		  }
 		  if (cycles_wo_finds >=threshold_cycles_wo_finds){
 			  record_possible_value_changing_mutation(7,arg[1]);
@@ -8786,7 +8656,7 @@ havoc_stage:
 
           /* add by yangke start */
 		  if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len-3)){
-			  arg[1]=UR_FIX(temp_len - 3);
+			  arg[1]=UR(temp_len - 3);
 		  }
 		  if (cycles_wo_finds >=threshold_cycles_wo_finds){
 			  record_possible_value_changing_mutation(8,arg[1]);
@@ -8819,7 +8689,7 @@ havoc_stage:
 
           /* add by yangke start */
 		  if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len-3)){
-			  arg[1]=UR_FIX(temp_len - 3);
+			  arg[1]=UR(temp_len - 3);
 		  }
 		  if (cycles_wo_finds >=threshold_cycles_wo_finds){
 			  record_possible_value_changing_mutation(9,arg[1]);
@@ -8865,10 +8735,8 @@ havoc_stage:
         	  out_buf=new_buf;
         	  temp_len=arg[1]+1;
           }else if (!mut_prior_mode||arg[1]==-1||arg[1]>=temp_len){
-				  arg[1]=UR_FIX(temp_len);
+				  arg[1]=UR(temp_len);
 		  }
-		  //if(arg[1]==0x1d1)FATAL("Find it");
-          //if(linear_search)arg[1]=0x1d1;
 
 		  if (cycles_wo_finds >=threshold_cycles_wo_finds){
 			  record_possible_value_changing_mutation(10,arg[1]);
@@ -8877,10 +8745,6 @@ havoc_stage:
 		  out_buf[arg[1]] ^= 1 + UR(255);
 		  if(target_bb->solving_stage==JUDGE){
 			  out_buf[arg[1]]=unique_judge_value(out_buf[arg[1]]);
-			  OKF("JUDGE:mem[0x%x]=0x%x",arg[1],out_buf[arg[1]]);
-		  }else if(target_bb->scanning_tasks>0 || target_bb->solving_stage==SCAN){
-			  OKF("SCAN temp_len=%d",temp_len);
-			  OKF("SCAN:mem[0x%x]=0x%x",arg[1],out_buf[arg[1]]);
 		  }
 
 
@@ -8913,7 +8777,7 @@ havoc_stage:
 
             /* add by yangke start */
             if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len - del_len + 1)){
-            	arg[1]=UR_FIX(temp_len - del_len + 1);
+            	arg[1]=UR(temp_len - del_len + 1);
 			}
 			if (cycles_wo_finds >=threshold_cycles_wo_finds){
 				record_possible_value_changing_mutation(arg[0],arg[1]);
@@ -8955,7 +8819,7 @@ havoc_stage:
 
             /* add by yangke start */
             if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len)){
-                arg[1]=UR_FIX(temp_len);
+                arg[1]=UR(temp_len);
             }
             if (cycles_wo_finds >=threshold_cycles_wo_finds){
                 record_possible_value_changing_mutation(13,arg[1]);
@@ -9004,7 +8868,7 @@ havoc_stage:
             /* add by yangke start */
 
 			if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len - copy_len + 1)){
-				arg[1]=UR_FIX(temp_len - copy_len + 1);
+				arg[1]=UR(temp_len - copy_len + 1);
 			}
 			if (cycles_wo_finds >=threshold_cycles_wo_finds){
 				record_possible_value_changing_mutation(14,arg[1]);
@@ -9043,7 +8907,7 @@ havoc_stage:
               if (extra_len > temp_len) break;
               /* add by yangke start */
 			  if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len - extra_len + 1)){
-				  arg[1]=UR_FIX(temp_len - extra_len + 1);
+				  arg[1]=UR(temp_len - extra_len + 1);
 			  }
 			  if (cycles_wo_finds >=threshold_cycles_wo_finds){
 			  	  record_possible_value_changing_mutation(15,arg[1]);
@@ -9064,7 +8928,7 @@ havoc_stage:
 
               /* add by yangke start */
 			  if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len - extra_len + 1)){
-				  arg[1]=UR_FIX(temp_len - extra_len + 1);
+				  arg[1]=UR(temp_len - extra_len + 1);
 			  }
 			  if (cycles_wo_finds >=threshold_cycles_wo_finds){
 				  record_possible_value_changing_mutation(15,arg[1]);
@@ -9082,7 +8946,7 @@ havoc_stage:
         case 16: {
             /* add by yangke start */
 		    if (!mut_prior_mode||arg[1]==-1||arg[1]>=(temp_len + 1)){
-			    arg[1]=UR_FIX(temp_len + 1);
+			    arg[1]=UR(temp_len + 1);
 		    }
 		    if (cycles_wo_finds >=threshold_cycles_wo_finds){
 			    record_possible_value_changing_mutation(16,arg[1]);
@@ -9148,8 +9012,7 @@ havoc_stage:
 
     /* out_buf might have been mangled a bit, so let's restore it to its
        original size and shape. */
-    if(temp_len==14)
-    	OKF("temp_len=%d,len=%d",temp_len,len);
+
     if (temp_len < len) out_buf = ck_realloc(out_buf, len);
     temp_len = len;
     memcpy(out_buf, in_buf, len);
