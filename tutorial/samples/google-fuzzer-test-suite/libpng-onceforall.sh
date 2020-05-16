@@ -7,6 +7,7 @@ TEST_SUITE_DIR=$WORK/fuzzer-test-suite
 if [ "$1" == "good" ];then
 AFLGO=/home/yangke/Program/AFL/aflgo/bak/aflgo-good
 DOWNLOAD_DIR_PREFIX=$WORK/build_good
+cd $AFLGO && make && cd - &&  cd $AFLGO/llvm_mode && make && cd -
 elif [ "$1" == "bad" ];then
 AFLGO=/home/yangke/Program/AFL/aflgo/bak/aflgo-origin
 DOWNLOAD_DIR_PREFIX=$WORK/build_bad
@@ -37,22 +38,22 @@ SUBJECT=$DOWNLOAD_DIR
 TMP_DIR=$SUBJECT/temp
 
 if [ "$2" != "-" ] ; then
-	if [ -d $TMP_DIR ]; then
-		rm -rf $TMP_DIR
-	fi
-	mkdir $TMP_DIR
+	#if [ -d $TMP_DIR ]; then
+	#	rm -rf $TMP_DIR
+	#fi
+	#mkdir $TMP_DIR
 
 	#download PUT
 	rm -rf ./BUILD
 	
 	if [ "$TARGET" = "pngread" -o "$TARGET" = "pngrutil" ];then
-		##[ ! -e libpng-1.2.56.tar.gz ] && wget https://downloads.sourceforge.net/project/libpng/libpng12/older-releases/1.2.56/libpng-1.2.56.tar.gz
-		##[ ! -d libpng-1.2.56 ] && tar xf libpng-1.2.56.tar.gz
-		cp -R libpng-1.2.56 BUILD 
+		[ ! -e libpng-1.2.56.tar.gz ] && wget https://downloads.sourceforge.net/project/libpng/libpng12/older-releases/1.2.56/libpng-1.2.56.tar.gz
+		[ ! -d libpng-1.2.56 ] && tar xf libpng-1.2.56.tar.gz
+		[ ! -d BUILD ] && cp -R libpng-1.2.56 BUILD 
 	elif [ "$TARGET" == "pngerror" ];then
 		#CVE-2011-2501 pngerror.c:184  version:libpng-1.2.44
 		[ ! -d ./libpng ] && git clone https://github.com/glennrp/libpng.git && cd libpng && git checkout 72c637e && cd ..
-		cp -R libpng BUILD
+		[ ! -d BUILD ] && cp -R libpng BUILD
 	fi
 	#setup targets
 	if [ "$TARGET" == "pngread" ];then
@@ -86,20 +87,20 @@ if [ "$2" != "-" ] ; then
 	export CFLAGS="-g3 $ADDITIONAL"
 	export CXXFLAGS="-g3 $ADDITIONAL"
 	export LDFLAGS="-lpthread"
+        export AR=llvm-ar
 
 	#1st compile
-	./configure --disable-shared
-	make
+	#AR=llvm-ar ./configure --disable-shared && make clean all
 	cd $SUBJECT
-	$CXX $CXXFLAGS $LDFLAGS -std=c++11 -v  $TEST_SUITE_DIR/libpng-1.2.56/target.cc $TEST_SUITE_DIR/examples/example-hooks.cc $DOWNLOAD_DIR/BUILD/.libs/libpng12.a -I $DOWNLOAD_DIR/BUILD/ -lz -o ${TARGET}_profiled
+	#$CXX $CXXFLAGS $LDFLAGS -std=c++11 -v  $TEST_SUITE_DIR/libpng-1.2.56/target.cc $TEST_SUITE_DIR/examples/example-hooks.cc $DOWNLOAD_DIR/BUILD/.libs/libpng12.a -I $DOWNLOAD_DIR/BUILD/ -lz -o ${TARGET}_profiled
 
 	# Clean up
-	cat $TMP_DIR/BBnames.txt | rev | cut -d: -f2- | rev | sort | uniq > $TMP_DIR/BBnames2.txt && mv $TMP_DIR/BBnames2.txt $TMP_DIR/BBnames.txt
-	cat $TMP_DIR/BBcalls.txt | sort | uniq > $TMP_DIR/BBcalls2.txt && mv $TMP_DIR/BBcalls2.txt $TMP_DIR/BBcalls.txt
+	#cat $TMP_DIR/BBnames.txt | rev | cut -d: -f2- | rev | sort | uniq > $TMP_DIR/BBnames2.txt && mv $TMP_DIR/BBnames2.txt $TMP_DIR/BBnames.txt
+	#cat $TMP_DIR/BBcalls.txt | sort | uniq > $TMP_DIR/BBcalls2.txt && mv $TMP_DIR/BBcalls2.txt $TMP_DIR/BBcalls.txt
 
 	# Generate distance
 
-	$AFLGO/scripts/genDistance.sh $SUBJECT $TMP_DIR ${TARGET}_profiled
+	#$AFLGO/scripts/genDistance.sh $SUBJECT $TMP_DIR ${TARGET}_profiled
 
 	echo "Distance values:"
 	head -n5 $TMP_DIR/distance.cfg.txt
@@ -112,13 +113,14 @@ if [ "$2" != "-" ] ; then
 
 	#2nd compile
 	cd $DOWNLOAD_DIR/BUILD/	
-	make clean && ./configure --disable-shared  && make
+	#AR=llvm-ar ./configure --disable-shared 
+        #make clean all
 	cd $SUBJECT 
-	$CXX $CXXFLAGS $LDFLAGS -std=c++11 -v  $TEST_SUITE_DIR/libpng-1.2.56/target.cc $TEST_SUITE_DIR/examples/example-hooks.cc $DOWNLOAD_DIR/BUILD/.libs/libpng12.a -I $DOWNLOAD_DIR/BUILD/ -lz -o ${TARGET}_profiled
-	if [[ $AFLGO == *good ]];then
-		$AFLGO/scripts/index_all_cfg_edges.py -t $TMP_DIR
-		#$AFLGO/tutorial/samples/test/vis-dot.sh $TMP_DIR/dot-files
-	fi	
+	#$CXX $CXXFLAGS $LDFLAGS -std=c++11 -v  $TEST_SUITE_DIR/libpng-1.2.56/target.cc $TEST_SUITE_DIR/examples/example-hooks.cc $DOWNLOAD_DIR/BUILD/.libs/libpng12.a -I $DOWNLOAD_DIR/BUILD/ -lz -o ${TARGET}_profiled
+	#if [[ $AFLGO == *good ]];then
+	#	$AFLGO/scripts/index_all_cfg_edges.py -t $TMP_DIR
+	#	#$AFLGO/tutorial/samples/test/vis-dot.sh $TMP_DIR/dot-files
+	#fi	
 fi
 
 if [ "$2" != "-" ] ; then
@@ -154,18 +156,27 @@ if [ -f $TIME_RECORD_FILE ]; then
 	rm $TIME_RECORD_FILE
 fi
 
-ITER=1
+ITER=20
+rm -rf ${TARGET}-tmp-results
+mkdir ${TARGET}-tmp-results
 for((i=1;i<=$((ITER));i++));
 do
 if [ "$DIR_IN" != "-" -a -d $DIR_OUT ]; then
 	rm -rf $DIR_OUT
 fi
 if [[ $AFLGO == *good ]];then
-	#gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR -x $AFLGO/dictionaries/png.dict $SUBJECT/${TARGET}_profiled @@
-	/usr/bin/time -a -o $TIME_RECORD_FILE $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR -x $AFLGO/dictionaries/png.dict $SUBJECT/${TARGET}_profiled @@
+	#gdb --args $AFLGO/afl-fuzz -S ${TARGET}_$((i))_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR -x $AFLGO/dictionaries/png.dict $SUBJECT/${TARGET}_profiled @@
+	#/usr/bin/time -a -o $TIME_RECORD_FILE $AFLGO/afl-fuzz -S ${TARGET}_$((i))_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR -x $AFLGO/dictionaries/png.dict $SUBJECT/${TARGET}_profiled @@
+        $AFLGO/afl-fuzz -S ${TARGET}_$((i))_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR -x $AFLGO/dictionaries/png.dict $SUBJECT/${TARGET}_profiled @@
+        if [ "$?" != 0 ];then
+		exit
+	fi
 elif [[ $AFLGO == *origin ]];then
 	#gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -x $AFLGO/dictionaries/png.dict $SUBJECT/${TARGET}_profiled @@
-	/usr/bin/time -a -o $TIME_RECORD_FILE $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -x $AFLGO/dictionaries/png.dict $SUBJECT/${TARGET}_profiled @@
+	#/usr/bin/time -a -o $TIME_RECORD_FILE $AFLGO/afl-fuzz -S ${TARGET}_$((i))_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -x $AFLGO/dictionaries/png.dict $SUBJECT/${TARGET}_profiled @@
+	$AFLGO/afl-fuzz -S ${TARGET}_$((i))_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -x $AFLGO/dictionaries/png.dict $SUBJECT/${TARGET}_profiled @@
 fi
+mv $DIR_OUT/${TARGET}_$((i))_result  ${TARGET}-tmp-results/${TARGET}_$((i))_result
 done
+mv ${TARGET}-tmp-results/${TARGET}_*_result $DIR_OUT/
 popd
