@@ -3797,7 +3797,9 @@ static void loadCFG()
 	while (fgets(line, MAX_LINE, f)) {
 		char * fname=strtok(line,",");
 		CFG * cfg = loadFuncCFG(fname);
-		add_element(CFGs,cfg);
+		if(cfg){
+			add_element(CFGs,cfg);
+		}
 	}
 	ck_free(fn);
 	fclose(f);
@@ -4297,21 +4299,37 @@ static inline int affect_two(LinkedPosition *p){
 static inline int is_bijection_maped(LinkedPosition *p){
 	OKF("LETS CHECK FMAP and its uniqueness");
 	display_fmap(p);//lets check the result
+	u8 directed_read=0;
 	int valid_cnt=0;
 	for(int i=0;i<FMAP_LEN;i++){
 		if(p->fmap[i].valid){
 			valid_cnt++;
 			for(int j=i+1;j<FMAP_LEN;j++){
-				if(p->fmap[i].output==p->fmap[j].output
-						&& p->fmap[i].valid && p->fmap[j].valid
-						&& p->fmap[i].trace_len==p->fmap[j].trace_len){
-					OKF("!!3");
-					return 0;
+//				if(p->fmap[i].output==p->fmap[j].output
+//						&& p->fmap[i].valid && p->fmap[j].valid
+//						&& p->fmap[i].trace_len==p->fmap[j].trace_len){
+//
+//						return 0;
+//				}
+				if(p->fmap[i].valid && p->fmap[j].valid){
+					if(p->fmap[i].trace_len==p->fmap[j].trace_len){
+						if(p->fmap[i].output!=p->fmap[j].output){
+							u64 sub1=p->fmap[i].input-p->fmap[j].input;
+							u8 sub2=p->fmap[i].output-p->fmap[j].output;
+							if(sub2+sub1==0||sub2-sub1==0||(sub1%sub2==0&&(sub1/sub2)%256==0)){
+								directed_read=1;
+							}
+						}else{
+							OKF("!!3");
+							return 0;
+						}
+					}
 				}
+
 			}
 		}
 	}
-	if(valid_cnt>1){
+	if(valid_cnt>1 && directed_read){
 		OKF("!!1");
 		return 1;
 	}else{
@@ -4473,9 +4491,12 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 			}
 		}
 
-		if ((target_bb->node && target_bb->node->branch_type==STATE_BASED)||updated){
+		if ((target_bb->node && target_bb->node->branch_type==STATE_BASED)){
 			cleanup_value_changing_mutation_record();
-			WARNF("Target Updated. Clean Up!");
+			WARNF("New Path found & STATE_BASED currently. Target=%s, d=%f , Clean Up!",target_bb->node->bbname, target_bb->node->distance);
+		}else if (updated){
+			cleanup_value_changing_mutation_record();
+			WARNF("Target Updated. Target=%s, d=%f , Clean Up!",target_bb->node->bbname, target_bb->node->distance);
 		}
     }
     /* add by yangke end */
@@ -6588,7 +6609,6 @@ static inline void  record_value_changing_mutation(Node * node_list[],int size,S
 				while ((pos_str = map_next(&tmp_pos_map[i], &iter))) {
 					int pos_cnt=*map_get(&tmp_pos_map[i], pos_str);
 					int hex_pos=atoi(pos_str);
-					OKF("pos:0x%x",hex_pos);
 					if(!pos_list_str){
 						pos_list_str=alloc_printf("%x[%d]",hex_pos,pos_cnt);
 					}else{
@@ -6597,7 +6617,7 @@ static inline void  record_value_changing_mutation(Node * node_list[],int size,S
 						ck_free(temp_str);
 					}
 				}
-				OKF("%d: %s",i,pos_list_str);
+				OKF("VALID POS FOR MUTAROR %d(<pos>[<cnt>]):\n %s",i,pos_list_str);
 			}
 		}
 	}
@@ -6806,7 +6826,7 @@ static inline void  record_value_changing_mutation(Node * node_list[],int size,S
 				while ((pos_str = map_next(&tmp_pos_map[i], &iter))) {
 					int pos_cnt=*map_get(&tmp_pos_map[i], pos_str);
 					int hex_pos=atoi(pos_str);
-					OKF("pos:0x%x",hex_pos);
+					//OKF("pos:0x%x",hex_pos);
 					if(!pos_list_str){
 						pos_list_str=alloc_printf("%x[%d]",hex_pos,pos_cnt);
 					}else{
@@ -7108,6 +7128,7 @@ scan:
 						if(p->fuzz_cnt>=FMAP_LEN){
 							if(is_bijection_maped(p)){
 								target_bb->node->branch_type=FIELD_BASED;
+								FATAL("FIELD_BASED %s",target_bb->node->bbname);
 								add_position(&target_bb->c_focus->eff_pos_list,p);
 								target_bb->c_focus->pos_focus=create_position(target_bb->c_focus->fuzz_pos);
 							}
@@ -8513,6 +8534,7 @@ havoc_stage:
     	    	 if(target_bb->solving_stage!=ANSWER||target_bb->node->branch_type!=FIELD_BASED){
     	    		 FATAL("This should not happen!!");
     	    	 }
+
     	    	 OKF("ANSWER:mem[0x%x]=0x%x",pos,(u8)target_bb->answer_focus->v);
 
     	    	 if(pos>=temp_len){
@@ -9139,8 +9161,8 @@ havoc_stage:
 
     /* out_buf might have been mangled a bit, so let's restore it to its
        original size and shape. */
-    if(temp_len==14)
-    	OKF("temp_len=%d,len=%d",temp_len,len);
+//    if(temp_len==14)
+//    	OKF("temp_len=%d,len=%d",temp_len,len);
     if (temp_len < len) out_buf = ck_realloc(out_buf, len);
     temp_len = len;
     memcpy(out_buf, in_buf, len);
