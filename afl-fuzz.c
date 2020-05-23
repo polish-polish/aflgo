@@ -3797,7 +3797,9 @@ static void loadCFG()
 	while (fgets(line, MAX_LINE, f)) {
 		char * fname=strtok(line,",");
 		CFG * cfg = loadFuncCFG(fname);
-		add_element(CFGs,cfg);
+		if(cfg){
+			add_element(CFGs,cfg);
+		}
 	}
 	ck_free(fn);
 	fclose(f);
@@ -3906,6 +3908,7 @@ static int update_margin_bbs(int len)
 								remove_values(&target_bb->answer_list);
 								target_bb->answer_focus=NULL;
 								target_bb->node=node;
+								OKF("TARGET UPDATE:%s",node->bbname);
 								target_bb->scanning_tasks=1;
 								target_bb->solving_stage=SCAN;
 								target_bb->max_len=len>target_bb->max_len?len:target_bb->max_len;
@@ -4291,22 +4294,35 @@ static inline int affect_two(LinkedPosition *p){
 }
 /* each different input trigger different out put */
 static inline int is_bijection_maped(LinkedPosition *p){
+	u8 directed_read=0;
 	int valid_cnt=0;
 	for(int i=0;i<FMAP_LEN;i++){
 		if(p->fmap[i].valid){
 			valid_cnt++;
 			for(int j=i+1;j<FMAP_LEN;j++){
-				if(p->fmap[i].output==p->fmap[j].output
-						&& p->fmap[i].valid && p->fmap[j].valid
-						&& p->fmap[i].trace_len==p->fmap[j].trace_len){
-					return 0;
+				if(p->fmap[i].valid && p->fmap[j].valid){
+					if(p->fmap[i].trace_len==p->fmap[j].trace_len){
+						if(p->fmap[i].output!=p->fmap[j].output){
+							u64 sub1=p->fmap[i].input-p->fmap[j].input;
+							u8 sub2=p->fmap[i].output-p->fmap[j].output;
+							if(sub2+sub1==0||sub2-sub1==0||(sub1%sub2==0&&(sub1/sub2)%256==0)){
+								directed_read=1;
+							}
+						}else{
+							OKF("!!3");
+							return 0;
+						}
+					}
 				}
+
 			}
 		}
 	}
-	if(valid_cnt>1){
+	if(valid_cnt>1 && directed_read){
+		OKF("!!1");
 		return 1;
 	}else{
+		OKF("!!2");
 		return 0;
 	}
 }
@@ -4458,12 +4474,12 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 			}
 		}
 
-		if (updated){
+		if ((target_bb->node && target_bb->node->branch_type==STATE_BASED)){
 			cleanup_value_changing_mutation_record();
-			WARNF("Target Updated. Clean Up!");
-		}else if(target_bb->node && target_bb->node->branch_type==STATE_BASED){
+			WARNF("New Path found & STATE_BASED currently. Target=%s, d=%f , Clean Up!",target_bb->node->bbname, target_bb->node->distance);
+		}else if (updated){
 			cleanup_value_changing_mutation_record();
-			WARNF("State Updated. Clean Up!");
+			WARNF("Target Updated. Target=%s, d=%f , Clean Up!",target_bb->node->bbname, target_bb->node->distance);
 		}
     }
     /* add by yangke end */
