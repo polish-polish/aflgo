@@ -517,7 +517,7 @@ int AFLCoverage::handleStrCmp(ICmpInst *ICmp, GlobalVariable *AFLMapPtr,
 	if(op){
 		if(CallInst * CI = dyn_cast < CallInst > (op)){
 			Function *func = CI->getCalledFunction();
-			if (func && 0==func->getName().compare(StringRef("strcmp"))){
+			if (func && (0==func->getName().compare(StringRef("strcmp"))||0==func->getName().compare(StringRef("strncmp")))){
 				Value * arg0=CI->getArgOperand(0);
 				Value * arg1=CI->getArgOperand(1);
 				ConstantExpr  * const_expr0 = dyn_cast < ConstantExpr > (arg0);
@@ -1270,11 +1270,14 @@ bool AFLCoverage::runOnModule(Module &M) {
 				//M.getSourceFileName()
 				OKF("#Dump <<BBname>,RandomId> pairs to %s",
 					(rid_bbname_pairs_dir + "/" + F.getName().str() +".rid_bbname_pairs.txt\n").c_str());
-				bbname_id_pairs.open(rid_bbname_pairs_dir + "/" + F.getName().str() +".rid_bbname_pairs.txt",
-									std::ofstream::out);
-				bbname_id_pairs.close();
+				//bbname_id_pairs.open(rid_bbname_pairs_dir + "/" + F.getName().str() +".rid_bbname_pairs.txt",
+				//					std::ofstream::out);
+				//bbname_id_pairs.close();
 				bbname_id_pairs.open(rid_bbname_pairs_dir + "/" + F.getName().str() +".rid_bbname_pairs.txt",
 					std::ofstream::out | std::ofstream::app);
+				if(F.getName().str()=="png_read_row"){
+					OKF("%s",F.getName().data());
+				}
 			}
 
 
@@ -1404,6 +1407,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 				//original aflgo instrumentation break
 				/*add by yangke start*/
 				if (!OutDirectory.empty()){
+
 					std::string key_str=bbRecord(cur_loc, BB, bbname_id_pairs);
 					if (bb_branch_info.is_open()){
 						bbBranchRecord(key_str, BB, bb_branch_info, bb_to_dis, basic_blocks);
