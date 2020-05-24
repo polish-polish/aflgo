@@ -433,7 +433,7 @@ typedef struct LinkListInteger{
 	int len;
 	struct LinkedInteger * head;
 } LinkListInteger;
-#define FMAP_LEN 5 //make sure 1<FMAP_LEN<9
+#define FMAP_LEN 6 //make sure 1<FMAP_LEN<9
 typedef struct FMap{
 	u8  input;
 	u64 output;
@@ -4301,28 +4301,20 @@ static inline int is_bijection_maped(LinkedPosition *p){
 	OKF("LETS CHECK FMAP and its uniqueness");
 	display_fmap(p);//lets check the result
 	u8 directed_read=0;
-	int valid_cnt=0;
-	for(int i=0;i<FMAP_LEN;i++){
+	for(int i=0;i<FMAP_LEN-1;i++){
 		if(p->fmap[i].valid){
-			valid_cnt++;
 			for(int j=i+1;j<FMAP_LEN;j++){
-//				if(p->fmap[i].output==p->fmap[j].output
-//						&& p->fmap[i].valid && p->fmap[j].valid
-//						&& p->fmap[i].trace_len==p->fmap[j].trace_len){
-//
-//						return 0;
-//				}
 				if(p->fmap[i].valid && p->fmap[j].valid){
 					if(p->fmap[i].trace_len==p->fmap[j].trace_len){
 						if(p->fmap[i].output!=p->fmap[j].output){
-							u64 sub1=p->fmap[i].input-p->fmap[j].input;
-							u8 sub2=p->fmap[i].output-p->fmap[j].output;
+							u8 sub1=p->fmap[i].output-p->fmap[j].output;
+							u64 sub2=p->fmap[i].input-p->fmap[j].input;
+							OKF("%llx,%x",sub1+sub2,sub1-sub2);
 							if(sub2+sub1==0||sub2-sub1==0||(sub1%sub2==0&&(sub1/sub2)%256==0)){
 								directed_read=1;
+								OKF("!!1");
+								return 1;
 							}
-						}else{
-							OKF("!!3");
-							return 0;
 						}
 					}
 				}
@@ -4330,13 +4322,8 @@ static inline int is_bijection_maped(LinkedPosition *p){
 			}
 		}
 	}
-	if(valid_cnt>1 && directed_read){
-		OKF("!!1");
-		return 1;
-	}else{
-		OKF("!!2");
-		return 0;
-	}
+	OKF("!!2");
+	return 0;
 }
 static inline int is_direct_use(LinkedPosition *p){
 	OKF("LETS CHECK FMAP and its uniqueness");
@@ -7075,7 +7062,8 @@ static inline u8 unique_judge_value(){
 		for(int i=0;i<cnt;i++){
 			if(byte==target_bb->c_focus->pos_focus->fmap[i].input){
 				repeat=1;
-				byte=20+UR(108);
+				//byte=0x20+UR(0x5F);//0x20~0x7E
+				byte=UR(256);
 				break;
 			}
 		}
@@ -8985,18 +8973,19 @@ havoc_stage:
 		  }else if (!mut_prior_mode||arg[1]==-1||arg[1]>=temp_len){
 				  arg[1]=UR(temp_len);
 		  }
-
+          if(target_bb->solving_stage==SCAN){
+			  out_buf[arg[1]]=unique_judge_value();
+			  OKF("SCAN:mem[0x%x]=0x%x",arg[1],out_buf[arg[1]]);
+			  OKF("mem=%s",out_buf);
+		  }else{
+			  out_buf[arg[1]] ^= 1 + UR(255);
+		  }
 		  if (cycles_wo_finds >=threshold_cycles_wo_finds){
 			  record_possible_value_changing_mutation(10,arg[1]);
 		  }
 
 
-		  if(target_bb->solving_stage==SCAN){
-			  out_buf[arg[1]]=unique_judge_value();
-			  OKF("SCAN:mem[0x%x]=0x%x",arg[1],out_buf[arg[1]]);
-		  }else{
-			  out_buf[arg[1]] ^= 1 + UR(255);
-		  }
+
           /* add by yangke end */
           break;
         }
