@@ -102,7 +102,7 @@ protected:
 	void mapValue2(Value *insert_point, Value *v, Value *v1, GlobalVariable *AFLMapPtr,
 				GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
 				unsigned int cur_loc);
-	void mapValue3(Value *insert_point, Value *GEP, GlobalVariable *AFLMapPtr,
+	void mapValue3(Value *insert_point, Value *vAddress, GlobalVariable *AFLMapPtr,
 					GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
 					unsigned int cur_loc);
 	size_t hashName(Value *v);
@@ -523,26 +523,16 @@ int AFLCoverage::handleStrCmp(ICmpInst *ICmp, GlobalVariable *AFLMapPtr,
 				ConstantExpr  * const_expr0 = dyn_cast < ConstantExpr > (arg0);
 				ConstantExpr  * const_expr1 = dyn_cast < ConstantExpr > (arg1);
 
-				Value  * GEPI=NULL;
+				Value  * vAddress=NULL;
 				if(const_expr0&&!const_expr1){
-					//GEPI = dyn_cast < GetElementPtrInst > (arg1);
-					GEPI = arg1;
+					vAddress = arg1;
 				}else if(const_expr1&&!const_expr0){
-					//GEPI = dyn_cast < GetElementPtrInst > (arg0);
-					GEPI = arg0;
+					vAddress = arg0;
 				}
-				if(GEPI){
-					//GEPI->getPointerOperand();
+				if(vAddress){
 					OKF("#mapValue3#");
-					mapValue3(CI, GEPI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-//					if(0==func->getName().compare(StringRef("strncmp"))){
-//						if(0==BB.getParent()->getName().compare(StringRef("demangle_prefix"))){
-//							debug(arg0);debug(arg1);
-//							FATAL("FIND IT");
-//						}
-//					}
+					mapValue3(CI, vAddress, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
 					return 1;
-					//accumulate all the Char!='\0' to the target memory
 				}
 			}
 		}

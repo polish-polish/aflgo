@@ -8684,52 +8684,6 @@ havoc_stage:
     	    		 mut_with_str_content(&out_buf,&temp_len,insert_at,str,answer_len,1,2);
     	    		 break;
     	    	 }
-//    	    	 if(insert_at>=temp_len){
-//    	    		 OKF("yes!!,find pos:%d",insert_at);
-//    	    		 u8* new_buf = ck_alloc_nozero(insert_at+answer_len+1);
-//    	    		 memcpy(new_buf,out_buf,temp_len);
-//    	    		 if(insert_at==temp_len+1)
-//    	    			 new_buf[insert_at-1]='\0';
-//    	    		 memcpy(new_buf+insert_at,target_bb->node->answer_str+1,answer_len);
-//    	    		 temp_len=insert_at+answer_len+1;
-//    	    		 new_buf[temp_len-1]='\0';
-//    	    		 ck_free(out_buf);
-//    	    		 out_buf = new_buf;
-//    	    		 OKF("%s,%s,%s",out_buf,out_buf+6,out_buf+insert_at);
-//    	    	 }else{
-//    	    		 u8  back_char=out_buf[temp_len-1];
-//					 out_buf[temp_len-1]='\0';
-//					 int origin_len=strlen(out_buf+insert_at);
-//					 if(origin_len==temp_len-insert_at-1){
-//						 if(back_char!='\0'){
-//							 origin_len=0;
-//						 }
-//					 }
-//					 out_buf[temp_len-1]=back_char;
-//					 OKF("temp_len=%d,origin_len=%d,insert_at=%d",temp_len,origin_len,insert_at);
-//					 OKF("new_buf_len=%d",temp_len + answer_len-origin_len +1);
-//					 u8* new_buf = ck_alloc_nozero(temp_len + answer_len-origin_len);
-//
-//					 /* Head */
-//					 memcpy(new_buf, out_buf, insert_at);
-//					 OKF("%s",new_buf);
-//					 /* Inserted part */
-//					 memcpy(new_buf + insert_at, target_bb->node->answer_str+1, answer_len);
-//					 *(new_buf + insert_at + answer_len)='\0';
-//					 OKF("%s",new_buf+insert_at);
-//					 /* Tail */
-//					 memcpy(new_buf + insert_at + answer_len + 1, out_buf + insert_at + origin_len+1,
-//							temp_len - insert_at - origin_len-1);
-//					 OKF("%s",new_buf + insert_at + answer_len +1);
-//
-//					 ck_free(out_buf);
-//					 out_buf   = new_buf;
-//					 temp_len += answer_len-origin_len;//add an position for further detection
-//					 OKF("String answering:%s",target_bb->node->answer_str);
-//					 //FATAL("%s",new_buf + insert_at);
-//    	    	 }
-
-
     	     }
     	 }
     	 if(linear_search){//||target_bb->scanning_tasks||target_bb->solving_stage==JUDGE
