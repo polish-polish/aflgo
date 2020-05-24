@@ -470,6 +470,7 @@ typedef struct Target{
 	int max_len;
 	LinkListInteger answer_list;
 	LinkedInteger* answer_focus;
+	int string_ans_cnt;
 	LinkListInteger value_list;
 	int c_list_len;
 	Candidate * c_list;
@@ -3910,6 +3911,7 @@ static int update_margin_bbs(int len)
 								target_bb->node=node;
 								target_bb->scanning_tasks=1;
 								target_bb->solving_stage=SCAN;
+								target_bb->string_ans_cnt=0;
 								target_bb->max_len=len>target_bb->max_len?len:target_bb->max_len;
 								target_bb->born_cycle=queue_cycle;
 								strcpy(target_bb->function,fname);
@@ -4131,7 +4133,6 @@ static void clear_position(LinkedPosition * p,int pos){
 		p->fmap[i].trace_len=0;
 		p->fmap[i].valid=0;
 	}
-	return p;
 }
 static LinkedPosition * create_position(int pos){
 	LinkedPosition * p=(LinkedPosition *)malloc(sizeof(LinkedPosition));
@@ -4406,8 +4407,10 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 					if(target_bb->solving_stage==SCAN && target_bb->scanning_tasks>0){//&& queue_cur->exec_path_len==cur_trace_len&& target_bb->c_focus
 						if(target_bb->c_focus->pos_focus->fuzz_cnt==1 && target_bb->c_focus->base_value!=cur[target_bb->node->rid]){
 								target_bb->c_focus->pos_focus->effect=1;
-								OKF("Effect TTTT");
+								OKF("Effective");
 						}
+						OKF("base=%llx,cur=%llx",target_bb->c_focus->base_value,cur[target_bb->node->rid]);
+						OKF("mem=%s,bbname:%s,answer:%s",(char *)mem,target_bb->node->bbname,target_bb->node->answer_str);
 						if(target_bb->c_focus->pos_focus->effect){
 							LinkedPosition *p=target_bb->c_focus->pos_focus;
 							u8  * t=(u8 *)mem;
@@ -4644,33 +4647,33 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
       unique_crashes++;
       /* add by yangke start */
-      OKF("First Crash is Achieved! Exit now!");
-      u8 * statistic_file_name=alloc_printf("%s/statistics", out_dir);
-      u8 * info=alloc_printf("mon/rand mut_times:%d|%d,%0.2f,win_times,%d|%d\n",monitor_mut,random_mut,(float)monitor_mut/(float)random_mut,monitor_win,random_win);
-      int statistic_file_fd = open(statistic_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
-      if (statistic_file_fd < 0) PFATAL("Unable to create '%s'", statistic_file_name);
-      ck_write(statistic_file_fd, info, strlen(info), statistic_file_name);
-      ck_write(statistic_file_fd, mem, len, statistic_file_name);
-      ck_write(statistic_file_fd, "\n", 1, statistic_file_name);
-      close(statistic_file_fd);
-      ck_free(statistic_file_name);
-      ck_free(info);
-      fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
-      if (fd < 0) PFATAL("Unable to create '%s'", fn);
-      ck_write(fd, mem, len, fn);
-      close(fd);
-      ck_free(fn);
-      //clean up
-      fclose(plot_file);
-	  destroy_queue();
-	  destroy_extras();
-	  destroy_all_cfg();
-	  destroy_target();
-	  destroy_records();
-	  ck_free(target_path);
-	  ck_free(sync_id);
-      alloc_report();
-      exit(0);
+//      OKF("First Crash is Achieved! Exit now!");
+//      u8 * statistic_file_name=alloc_printf("%s/statistics", out_dir);
+//      u8 * info=alloc_printf("mon/rand mut_times:%d|%d,%0.2f,win_times,%d|%d\n",monitor_mut,random_mut,(float)monitor_mut/(float)random_mut,monitor_win,random_win);
+//      int statistic_file_fd = open(statistic_file_name, O_WRONLY | O_CREAT | O_APPEND, 0600);
+//      if (statistic_file_fd < 0) PFATAL("Unable to create '%s'", statistic_file_name);
+//      ck_write(statistic_file_fd, info, strlen(info), statistic_file_name);
+//      ck_write(statistic_file_fd, mem, len, statistic_file_name);
+//      ck_write(statistic_file_fd, "\n", 1, statistic_file_name);
+//      close(statistic_file_fd);
+//      ck_free(statistic_file_name);
+//      ck_free(info);
+//      fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
+//      if (fd < 0) PFATAL("Unable to create '%s'", fn);
+//      ck_write(fd, mem, len, fn);
+//      close(fd);
+//      ck_free(fn);
+//      //clean up
+//      fclose(plot_file);
+//	  destroy_queue();
+//	  destroy_extras();
+//	  destroy_all_cfg();
+//	  destroy_target();
+//	  destroy_records();
+//	  ck_free(target_path);
+//	  ck_free(sync_id);
+//      alloc_report();
+//      exit(0);
       /* add by yangke end */
 
       last_crash_time = get_cur_time();
@@ -7061,7 +7064,8 @@ static inline int init_answer_list(char * answer_str){
 	OKF("target_bb->answer_list.len=%d",target_bb->answer_list.len);
 	return target_bb->answer_list.len;
 }
-static inline u8 unique_judge_value(u8 byte){
+static inline u8 unique_judge_value(){
+	u8 byte=20+UR(108);
 	int cnt=target_bb->c_focus->pos_focus->fuzz_cnt-1;//already increased
 	OKF("fuzz_cnt:%d",cnt+1);
 	if(cnt<0)FATAL("cnt:%d<0",cnt);
@@ -7071,7 +7075,7 @@ static inline u8 unique_judge_value(u8 byte){
 		for(int i=0;i<cnt;i++){
 			if(byte==target_bb->c_focus->pos_focus->fmap[i].input){
 				repeat=1;
-				byte=UR(256);
+				byte=20+UR(108);
 				break;
 			}
 		}
@@ -7128,7 +7132,7 @@ scan:
 						if(p->fuzz_cnt>=FMAP_LEN){
 							if(is_bijection_maped(p)){
 								target_bb->node->branch_type=FIELD_BASED;
-								FATAL("FIELD_BASED %s",target_bb->node->bbname);
+								//FATAL("FIELD_BASED %s",target_bb->node->bbname);
 								add_position(&target_bb->c_focus->eff_pos_list,p);
 								target_bb->c_focus->pos_focus=create_position(target_bb->c_focus->fuzz_pos);
 							}
@@ -7163,6 +7167,10 @@ scan_over:
 							target_bb->solving_stage=ANSWER;
 							if(strstr(target_bb->node->answer_str,"\"")){
 								arg[0]=-2;//signal that we have string answer;
+								target_bb->string_ans_cnt=5;
+								OKF("start answer %s with %s ",target_bb->node->bbname,target_bb->node->answer_str);
+								//target_bb->string_ans_cnt controls the string answer mutation
+								//(1)with/without NULL tail (2)insert/overwrite/replace
 								return 1;
 							}
 							if(init_answer_list(target_bb->node->answer_str)>0){//handle char answer
@@ -7180,6 +7188,10 @@ scan_over:
 				}
 				if(target_bb->answer_focus){
 					arg[0]=-1;//signal that we have answer, fetch it from target_bb->answer_focus;
+					return 1;
+				}else if(target_bb->string_ans_cnt){
+					target_bb->string_ans_cnt--;
+					arg[0]=-2;
 					return 1;
 				}else{
 					target_bb->solving_stage=RANDOM;
@@ -7329,6 +7341,107 @@ static inline int UR_FIX(int range)
 		}
 		OKF("iter:%d",iter);
 	}FATAL("DEADCODE! touched");*/
+}
+void mut_with_str_content(u8**p_out_buf, s32 * p_temp_len, s32 offset ,u8 * str, s32 len,
+		u8 with_terminator, u8 method)
+{
+	u8 * out_buf=*p_out_buf;
+	int temp_len=*p_temp_len;
+
+	if(offset>=temp_len){
+		*p_temp_len=offset+len;
+		if(with_terminator){
+			*p_temp_len+=1;
+		}
+		u8* new_buf = ck_alloc_nozero(*p_temp_len);
+		memcpy(new_buf,out_buf,temp_len);
+		if(offset==temp_len+1){
+			new_buf[offset-1]='\0';
+		}
+		memcpy(new_buf+offset,str,len);
+		ck_free(out_buf);
+		if(with_terminator){
+			new_buf[*p_temp_len-1]='\0';
+		}
+		*p_out_buf = new_buf;
+	}else{
+		switch (method){
+			case 0://insert
+			{
+	insert_op:
+				*p_temp_len=temp_len+len;
+				if(with_terminator){
+					*p_temp_len+=1;
+				}
+				u8* new_buf = ck_alloc_nozero(*p_temp_len);
+				memcpy(new_buf,out_buf,offset);//head
+				memcpy(new_buf+offset,str,len);//content
+				int tail_offset=offset+len;
+				if(with_terminator){
+					new_buf[offset+len]='\0';
+					tail_offset+=1;
+				}
+				memcpy(new_buf+tail_offset,out_buf+offset,temp_len-offset);//tail
+				ck_free(out_buf);
+				*p_out_buf = new_buf;
+				break;
+			}
+			case 1://overwrite
+			{
+				*p_temp_len=temp_len+len;
+				int required_len=offset+len;
+				if(with_terminator){
+					required_len+=1;
+				}
+				if(required_len>temp_len){
+					*p_temp_len=required_len;
+					u8* new_buf=ck_alloc_nozero(required_len);
+					memcpy(new_buf,out_buf,offset);
+					ck_free(out_buf);
+					out_buf=new_buf;
+					*p_out_buf=new_buf;
+
+				}
+				memcpy(out_buf+offset,str,len);//content
+				if(with_terminator){
+					out_buf[offset+len]='\0';
+				}
+				break;
+			}
+			case 2://replace
+			{
+				int i=offset;
+				for(i=offset;i<temp_len;i++){
+					u8 ch = out_buf[i];
+					if(ch<20&&ch>=128){
+						break;
+					}
+				}
+				int origin_str_len=i-offset;
+				if(i>0){
+					int required_len=temp_len + len-origin_str_len;
+					if(with_terminator){
+						required_len+=1;
+					}
+					*p_temp_len=required_len;
+					u8* new_buf = ck_alloc_nozero(required_len);
+					*p_out_buf=new_buf;
+					memcpy(new_buf, out_buf, offset);//head
+					memcpy(new_buf + offset, str, len);//content
+					u8 * p_new_tail =new_buf + offset + len;
+					if(with_terminator){
+						new_buf[offset+len]='\0';
+						p_new_tail+=1;
+					}
+					memcpy(p_new_tail, out_buf + i, temp_len - i);//tail
+
+				}else{
+					goto insert_op;
+				}
+			}
+		}
+	}
+
 }
 /* add by yangke end */
 
@@ -8549,51 +8662,72 @@ havoc_stage:
     	     }else if(arg[0]==-2){//handle string answer
 
     	    	 int insert_at=target_bb->c_focus->eff_pos_list.head->pos;
-    	    	 int answer_len=strlen(target_bb->node->answer_str)-2;//"apple"
-    	    	 if(insert_at>=temp_len){
-    	    		 OKF("yes!!,find pos:%d",insert_at);
-    	    		 u8* new_buf = ck_alloc_nozero(insert_at+answer_len+1);
-    	    		 memcpy(new_buf,out_buf,temp_len);
-    	    		 if(insert_at==temp_len+1)
-    	    			 new_buf[temp_len]='\0';
-    	    		 memcpy(new_buf+insert_at,target_bb->node->answer_str+1,answer_len);
-    	    		 temp_len=insert_at+answer_len+1;
-    	    		 new_buf[temp_len-1]='\0';
-    	    		 ck_free(out_buf);
-    	    		 out_buf = new_buf;
-    	    		 OKF("%s,%s,%s",out_buf,out_buf+6,out_buf+insert_at);
-    	    	 }else{
-    	    		 u8  back_char=out_buf[temp_len-1];
-					 out_buf[temp_len-1]='\0';
-					 int origin_len=strlen(out_buf+insert_at);
-					 if(origin_len==temp_len-insert_at-1){
-						 if(back_char!='\0'){
-							 origin_len=0;
-						 }
-					 }
-					 out_buf[temp_len-1]=back_char;
-					 OKF("temp_len=%d,origin_len=%d,insert_at=%d",temp_len,origin_len,insert_at);
-					 OKF("new_buf_len=%d",temp_len + answer_len-origin_len +1);
-					 u8* new_buf = ck_alloc_nozero(temp_len + answer_len-origin_len);
-
-					 /* Head */
-					 memcpy(new_buf, out_buf, insert_at);
-					 OKF("%s",new_buf);
-					 /* Inserted part */
-					 memcpy(new_buf + insert_at, target_bb->node->answer_str+1, answer_len);
-					 *(new_buf + insert_at + answer_len)='\0';
-					 OKF("%s",new_buf+insert_at);
-					 /* Tail */
-					 memcpy(new_buf + insert_at + answer_len + 1, out_buf + insert_at + origin_len+1,
-							temp_len - insert_at - origin_len-1);
-					 OKF("%s",new_buf + insert_at + answer_len +1);
-
-					 ck_free(out_buf);
-					 out_buf   = new_buf;
-					 temp_len += answer_len-origin_len;//add an position for further detection
-					 OKF("String answering:%s",target_bb->node->answer_str);
-					 //FATAL("%s",new_buf + insert_at);
+    	    	 int answer_len=strlen(target_bb->node->answer_str)-2;
+    	    	 u8 * str=target_bb->node->answer_str+1;
+    	    	 switch(target_bb->string_ans_cnt){
+				 case 5://insert with '\0'
+					 mut_with_str_content(&out_buf,&temp_len,insert_at,str,answer_len,0,0);
+					 break;
+    	    	 case 4://insert with '\0'
+					 mut_with_str_content(&out_buf,&temp_len,insert_at,str,answer_len,1,0);
+					 break;
+    	    	 case 3://insert with '\0'
+    	    		 mut_with_str_content(&out_buf,&temp_len,insert_at,str,answer_len,0,1);
+    	    		 break;
+    	    	 case 2:
+    	    		 mut_with_str_content(&out_buf,&temp_len,insert_at,str,answer_len,1,1);
+    	    		 break;
+    	    	 case 1:
+    	    		 mut_with_str_content(&out_buf,&temp_len,insert_at,str,answer_len,0,2);
+    	    		 break;
+    	    	 case 0:
+    	    		 mut_with_str_content(&out_buf,&temp_len,insert_at,str,answer_len,1,2);
+    	    		 break;
     	    	 }
+//    	    	 if(insert_at>=temp_len){
+//    	    		 OKF("yes!!,find pos:%d",insert_at);
+//    	    		 u8* new_buf = ck_alloc_nozero(insert_at+answer_len+1);
+//    	    		 memcpy(new_buf,out_buf,temp_len);
+//    	    		 if(insert_at==temp_len+1)
+//    	    			 new_buf[insert_at-1]='\0';
+//    	    		 memcpy(new_buf+insert_at,target_bb->node->answer_str+1,answer_len);
+//    	    		 temp_len=insert_at+answer_len+1;
+//    	    		 new_buf[temp_len-1]='\0';
+//    	    		 ck_free(out_buf);
+//    	    		 out_buf = new_buf;
+//    	    		 OKF("%s,%s,%s",out_buf,out_buf+6,out_buf+insert_at);
+//    	    	 }else{
+//    	    		 u8  back_char=out_buf[temp_len-1];
+//					 out_buf[temp_len-1]='\0';
+//					 int origin_len=strlen(out_buf+insert_at);
+//					 if(origin_len==temp_len-insert_at-1){
+//						 if(back_char!='\0'){
+//							 origin_len=0;
+//						 }
+//					 }
+//					 out_buf[temp_len-1]=back_char;
+//					 OKF("temp_len=%d,origin_len=%d,insert_at=%d",temp_len,origin_len,insert_at);
+//					 OKF("new_buf_len=%d",temp_len + answer_len-origin_len +1);
+//					 u8* new_buf = ck_alloc_nozero(temp_len + answer_len-origin_len);
+//
+//					 /* Head */
+//					 memcpy(new_buf, out_buf, insert_at);
+//					 OKF("%s",new_buf);
+//					 /* Inserted part */
+//					 memcpy(new_buf + insert_at, target_bb->node->answer_str+1, answer_len);
+//					 *(new_buf + insert_at + answer_len)='\0';
+//					 OKF("%s",new_buf+insert_at);
+//					 /* Tail */
+//					 memcpy(new_buf + insert_at + answer_len + 1, out_buf + insert_at + origin_len+1,
+//							temp_len - insert_at - origin_len-1);
+//					 OKF("%s",new_buf + insert_at + answer_len +1);
+//
+//					 ck_free(out_buf);
+//					 out_buf   = new_buf;
+//					 temp_len += answer_len-origin_len;//add an position for further detection
+//					 OKF("String answering:%s",target_bb->node->answer_str);
+//					 //FATAL("%s",new_buf + insert_at);
+//    	    	 }
 
 
     	     }
@@ -8902,10 +9036,12 @@ havoc_stage:
 			  record_possible_value_changing_mutation(10,arg[1]);
 		  }
 
-		  out_buf[arg[1]] ^= 1 + UR(255);
+
 		  if(target_bb->solving_stage==SCAN){
-			  out_buf[arg[1]]=unique_judge_value(out_buf[arg[1]]);
+			  out_buf[arg[1]]=unique_judge_value();
 			  OKF("SCAN:mem[0x%x]=0x%x",arg[1],out_buf[arg[1]]);
+		  }else{
+			  out_buf[arg[1]] ^= 1 + UR(255);
 		  }
           /* add by yangke end */
           break;
@@ -10405,6 +10541,25 @@ int stricmp(char const *a, char const *b) {
   }
 }
 
+void init_target_bb(){
+	  target_bb=(Target *)malloc(sizeof(Target));
+	  target_bb->node=NULL;
+	  target_bb->born_cycle=-1;
+	  target_bb->max_len=0;
+	  target_bb->function[0]='\0';
+	  target_bb->scanning_tasks=0;
+	  target_bb->solving_stage=RANDOM;
+	  target_bb->c_focus=NULL;
+	  target_bb->c_list=NULL;
+	  target_bb->c_list_len=0;
+	  target_bb->value_list.head=NULL;
+	  target_bb->value_list.len=0;
+	  target_bb->answer_list.head=NULL;
+	  target_bb->answer_list.len=0;
+	  target_bb->answer_focus=NULL;
+	  target_bb->string_ans_cnt=0;
+}
+
 /* Main entry point */
 
 int main(int argc, char** argv) {
@@ -10753,21 +10908,7 @@ int main(int argc, char** argv) {
 
   /* add by yangke start */
   if(!target_bb){
-  	  target_bb=(Target *)malloc(sizeof(Target));
-  	  target_bb->node=NULL;
-  	  target_bb->born_cycle=-1;
-  	  target_bb->max_len=0;
-  	  strcpy(target_bb->function,"");
-  	  target_bb->scanning_tasks=0;
-  	  target_bb->solving_stage=RANDOM;
-  	  target_bb->c_focus=NULL;
-  	  target_bb->c_list=NULL;
-  	  target_bb->c_list_len=0;
-  	  target_bb->value_list.head=NULL;
-  	  target_bb->value_list.len=0;
-  	  target_bb->answer_list.head=NULL;
-  	  target_bb->answer_list.len=0;
-  	  target_bb->answer_focus=NULL;
+	  init_target_bb();
   }
 
   while (1) {
