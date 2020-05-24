@@ -102,7 +102,7 @@ protected:
 	void mapValue2(Value *insert_point, Value *v, Value *v1, GlobalVariable *AFLMapPtr,
 				GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
 				unsigned int cur_loc);
-	void mapValue3(Value *insert_point, GetElementPtrInst *GEP, GlobalVariable *AFLMapPtr,
+	void mapValue3(Value *insert_point, Value *vAddress, GlobalVariable *AFLMapPtr,
 					GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
 					unsigned int cur_loc);
 	size_t hashName(Value *v);
@@ -469,7 +469,7 @@ StringRef AFLCoverage::getStringInStrCmp(ICmpInst *ICmp) {
 		if(op){
 			if(CallInst * CI = dyn_cast < CallInst > (op)){
 				Function *func = CI->getCalledFunction();
-				if (func && 0==func->getName().compare(StringRef("strcmp"))){
+				if (func && (0==func->getName().compare(StringRef("strcmp"))||0==func->getName().compare(StringRef("strncmp")))){
 					Value * arg0=CI->getArgOperand(0);
 					Value * arg1=CI->getArgOperand(1);
 					ConstantExpr  * const_expr0 = dyn_cast < ConstantExpr > (arg0);
@@ -522,18 +522,17 @@ int AFLCoverage::handleStrCmp(ICmpInst *ICmp, GlobalVariable *AFLMapPtr,
 				Value * arg1=CI->getArgOperand(1);
 				ConstantExpr  * const_expr0 = dyn_cast < ConstantExpr > (arg0);
 				ConstantExpr  * const_expr1 = dyn_cast < ConstantExpr > (arg1);
-				GetElementPtrInst  * GEPI=NULL;
+
+				Value  * vAddress=NULL;
 				if(const_expr0&&!const_expr1){
-					GEPI = dyn_cast < GetElementPtrInst > (arg1);
+					vAddress = arg1;
 				}else if(const_expr1&&!const_expr0){
-					GEPI = dyn_cast < GetElementPtrInst > (arg0);
+					vAddress = arg0;
 				}
-				if(GEPI){
-					GEPI->getPointerOperand();
+				if(vAddress){
 					OKF("#mapValue3#");
-					mapValue3(CI, GEPI, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+					mapValue3(CI, vAddress, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
 					return 1;
-					//accumulate all the Char!='\0' to the target memory
 				}
 			}
 		}
@@ -824,7 +823,7 @@ void AFLCoverage::mapValue2(Value *insert_point, Value *v,Value *v1, GlobalVaria
 	debug(myStore,"myStore\t");
 
 }
-void AFLCoverage::mapValue3(Value *insert_point, GetElementPtrInst *GEP, GlobalVariable *AFLMapPtr,
+void AFLCoverage::mapValue3(Value *insert_point, Value *GEP, GlobalVariable *AFLMapPtr,
 		GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
 		unsigned int cur_loc) {
 
@@ -854,8 +853,7 @@ void AFLCoverage::mapValue3(Value *insert_point, GetElementPtrInst *GEP, GlobalV
 
 	LoadInst *MapPtr = IRB.CreateLoad(AFLMapPtr);
 	MapPtr->setMetadata(M.getMDKindID("nosanitize"),MDNode::get(C, None));
-	if(flag)
-	debug(MapPtr,"MapPtr\t");
+	if(flag)debug(MapPtr,"MapPtr\t");
 
 #ifdef __x86_64__
 	IntegerType *LargestType = Int64Ty;
@@ -877,14 +875,15 @@ void AFLCoverage::mapValue3(Value *insert_point, GetElementPtrInst *GEP, GlobalV
 	LoadInst * pre_v = IRB.CreateLoad(LargestType,MapValuePtr);
 #endif
 	pre_v->setMetadata(M.getMDKindID("nosanitize"),MDNode::get(C, None));
-	debug(pre_v,"pre_v\t");
+	if(flag)debug(pre_v,"pre_v\t");
 
 
 	LoadInst * ch = IRB.CreateLoad(Int8Ty,GEP);
+	if(flag)debug(ch,"myCHAR\t");
 
 	StoreInst *myStore = IRB.CreateStore(ch, MapValuePtr);//ConstantInt::get(LargestType, instrument_cnt)
 	myStore->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-	debug(myStore,"myStore\t");
+	if(flag)debug(myStore,"myStore\t");
 
 }
 bool AFLCoverage::runOnModule(Module &M) {
