@@ -433,7 +433,7 @@ typedef struct LinkListInteger{
 	int len;
 	struct LinkedInteger * head;
 } LinkListInteger;
-#define FMAP_LEN 5 //make sure 1<FMAP_LEN<9
+#define FMAP_LEN 6 //make sure 1<FMAP_LEN<9
 typedef struct FMap{
 	u8  input;
 	u64 output;
@@ -4296,30 +4296,23 @@ static inline int affect_two(LinkedPosition *p){
 }
 /* each different input trigger different out put */
 static inline int is_bijection_maped(LinkedPosition *p){
-//	OKF("LETS CHECK FMAP and its uniqueness");
-//	display_fmap(p);//lets check the result
+	OKF("LETS CHECK FMAP and its uniqueness");
+	display_fmap(p);//lets check the result
 	u8 directed_read=0;
-	int valid_cnt=0;
-	for(int i=0;i<FMAP_LEN;i++){
+	for(int i=0;i<FMAP_LEN-1;i++){
 		if(p->fmap[i].valid){
-			valid_cnt++;
 			for(int j=i+1;j<FMAP_LEN;j++){
-//				if(p->fmap[i].output==p->fmap[j].output
-//						&& p->fmap[i].valid && p->fmap[j].valid
-//						&& p->fmap[i].trace_len==p->fmap[j].trace_len){
-//
-//						return 0;
-//				}
 				if(p->fmap[i].valid && p->fmap[j].valid){
 					if(p->fmap[i].trace_len==p->fmap[j].trace_len){
 						if(p->fmap[i].output!=p->fmap[j].output){
-							u64 sub1=p->fmap[i].input-p->fmap[j].input;
-							u8 sub2=p->fmap[i].output-p->fmap[j].output;
+							u8 sub1=p->fmap[i].output-p->fmap[j].output;
+							u64 sub2=p->fmap[i].input-p->fmap[j].input;
+							OKF("%llx,%x",sub1+sub2,sub1-sub2);
 							if(sub2+sub1==0||sub2-sub1==0||(sub1%sub2==0&&(sub1/sub2)%256==0)){
 								directed_read=1;
+								OKF("!!1");
+								return 1;
 							}
-						}else{
-							return 0;
 						}
 					}
 				}
@@ -4327,11 +4320,8 @@ static inline int is_bijection_maped(LinkedPosition *p){
 			}
 		}
 	}
-	if(valid_cnt>1 && directed_read){
-		return 1;
-	}else{
-		return 0;
-	}
+	OKF("!!2");
+	return 0;
 }
 static inline int is_direct_use(LinkedPosition *p){
 	OKF("LETS CHECK FMAP and its uniqueness");
@@ -4635,6 +4625,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 #endif /* ^!SIMPLE_FILES */
 
       unique_crashes++;
+
       /* add by yangke start */
 //      OKF("First Crash is Achieved! Exit now!");
 //      u8 * statistic_file_name=alloc_printf("%s/statistics", out_dir);
@@ -7029,6 +7020,7 @@ static inline int init_answer_list(char * answer_str){
 static inline u8 unique_judge_value(){
 	u8 byte=20+UR(108);
 	int cnt=target_bb->c_focus->pos_focus->fuzz_cnt-1;//already increased
+
 	if(cnt<0)FATAL("cnt:%d<0",cnt);
 	int repeat;
 	do{
@@ -7036,7 +7028,7 @@ static inline u8 unique_judge_value(){
 		for(int i=0;i<cnt;i++){
 			if(byte==target_bb->c_focus->pos_focus->fmap[i].input){
 				repeat=1;
-				byte=20+UR(108);
+				byte=UR(256);
 				break;
 			}
 		}
