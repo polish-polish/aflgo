@@ -517,7 +517,9 @@ int AFLCoverage::handleStrCmp(ICmpInst *ICmp, GlobalVariable *AFLMapPtr,
 	if(op){
 		if(CallInst * CI = dyn_cast < CallInst > (op)){
 			Function *func = CI->getCalledFunction();
-			if (func && (0==func->getName().compare(StringRef("strcmp"))||0==func->getName().compare(StringRef("strncmp")))){
+			if (func &&(0==func->getName().compare(StringRef("strcmp"))
+					||0==func->getName().compare(StringRef("strncmp"))
+					||0==func->getName().compare(StringRef("memcmp")))){
 				Value * arg0=CI->getArgOperand(0);
 				Value * arg1=CI->getArgOperand(1);
 				ConstantExpr  * const_expr0 = dyn_cast < ConstantExpr > (arg0);
@@ -532,6 +534,19 @@ int AFLCoverage::handleStrCmp(ICmpInst *ICmp, GlobalVariable *AFLMapPtr,
 				if(vAddress){
 					OKF("#mapValue3#");
 					mapValue3(CI, vAddress, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
+//					if(0==func->getName().compare(StringRef("strncmp"))){
+//						if(0==BB.getParent()->getName().compare(StringRef("demangle_prefix"))){
+//							debug(arg0);
+//							debug(arg1);
+//							if(!const_expr0){
+//								OKF("!const_expr0");
+//							}
+//							if(!const_expr1){
+//								OKF("!const_expr1");
+//							}
+//							FATAL("FIND IT");
+//						}
+//					}
 					return 1;
 				}
 			}
@@ -823,7 +838,7 @@ void AFLCoverage::mapValue2(Value *insert_point, Value *v,Value *v1, GlobalVaria
 	debug(myStore,"myStore\t");
 
 }
-void AFLCoverage::mapValue3(Value *insert_point, Value *GEP, GlobalVariable *AFLMapPtr,
+void AFLCoverage::mapValue3(Value *insert_point, Value *vAddress, GlobalVariable *AFLMapPtr,
 		GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
 		unsigned int cur_loc) {
 
@@ -853,8 +868,7 @@ void AFLCoverage::mapValue3(Value *insert_point, Value *GEP, GlobalVariable *AFL
 
 	LoadInst *MapPtr = IRB.CreateLoad(AFLMapPtr);
 	MapPtr->setMetadata(M.getMDKindID("nosanitize"),MDNode::get(C, None));
-	if(flag)
-	debug(MapPtr,"MapPtr\t");
+	if(flag)debug(MapPtr,"MapPtr\t");
 
 #ifdef __x86_64__
 	IntegerType *LargestType = Int64Ty;
@@ -876,10 +890,10 @@ void AFLCoverage::mapValue3(Value *insert_point, Value *GEP, GlobalVariable *AFL
 	LoadInst * pre_v = IRB.CreateLoad(LargestType,MapValuePtr);
 #endif
 	pre_v->setMetadata(M.getMDKindID("nosanitize"),MDNode::get(C, None));
-	debug(pre_v,"pre_v\t");
+	if(flag)debug(pre_v,"pre_v\t");
 
 
-	LoadInst * ch = IRB.CreateLoad(Int8Ty,GEP);
+	LoadInst * ch = IRB.CreateLoad(Int8Ty,vAddress);
 	debug(ch,"myCHAR\t");
 
 	StoreInst *myStore = IRB.CreateStore(ch, MapValuePtr);//ConstantInt::get(LargestType, instrument_cnt)

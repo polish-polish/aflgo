@@ -7062,7 +7062,7 @@ static inline u8 unique_judge_value(){
 		for(int i=0;i<cnt;i++){
 			if(byte==target_bb->c_focus->pos_focus->fmap[i].input){
 				repeat=1;
-				//byte=0x20+UR(0x5F);//0x20~0x7E
+				//byte=0x20+UR(0x5F);//0x20~0x7E visible char
 				byte=UR(256);
 				break;
 			}
@@ -8973,19 +8973,17 @@ havoc_stage:
 		  }else if (!mut_prior_mode||arg[1]==-1||arg[1]>=temp_len){
 				  arg[1]=UR(temp_len);
 		  }
-          if(target_bb->solving_stage==SCAN){
-			  out_buf[arg[1]]=unique_judge_value();
-			  OKF("SCAN:mem[0x%x]=0x%x",arg[1],out_buf[arg[1]]);
-			  OKF("mem=%s",out_buf);
-		  }else{
-			  out_buf[arg[1]] ^= 1 + UR(255);
-		  }
+
 		  if (cycles_wo_finds >=threshold_cycles_wo_finds){
 			  record_possible_value_changing_mutation(10,arg[1]);
 		  }
 
-
-
+		  if(target_bb->solving_stage==SCAN){
+			  out_buf[arg[1]]=unique_judge_value();
+			  OKF("SCAN:mem[0x%x]=0x%x",arg[1],out_buf[arg[1]]);
+		  }else{
+			  out_buf[arg[1]] ^= 1 + UR(255);
+		  }
           /* add by yangke end */
           break;
         }
