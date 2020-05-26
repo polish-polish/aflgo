@@ -6,7 +6,7 @@ TEST_SUITE_DIR=$WORK/fuzzer-test-suite
 
 if [ "$1" == "good" ];then
 AFLGO=/home/yangke/Program/AFL/aflgo/bak/aflgo-good
-cd $AFLGO && make && cd -
+cd $AFLGO && make clean all && cd - && cd $AFLGO/llvm_mode && make clean all && cd -
 DOWNLOAD_DIR=$WORK/build_good_${NAME}
 elif [ "$1" == "bad" ];then
 AFLGO=/home/yangke/Program/AFL/aflgo/bak/aflgo-origin
@@ -26,19 +26,19 @@ cd $DOWNLOAD_DIR
 SUBJECT=$DOWNLOAD_DIR
 TMP_DIR=$SUBJECT/temp
 SCRIPT_DIR=$TEST_SUITE_DIR/libjpeg-turbo-07-2017
-:<<!
+
 if [ "$1" != "-" ] ; then
-	if [ -d $TMP_DIR ]; then
-		rm -rf $TMP_DIR
-	fi
-	mkdir $TMP_DIR
+	#if [ -d $TMP_DIR ]; then
+	#	rm -rf $TMP_DIR
+	#fi
+	#mkdir $TMP_DIR
 	#echo -e "jdmarker.c:608\njdmarker.c:610\njdmarker.c:644\njdmarker.c:654\njdmarker.c:658\njdmarker.c:659\njdmarker.c:660" >$TMP_DIR/BBtargets.txt 
 
 	[ ! -e libjpeg-turbo ] && git clone https://github.com/libjpeg-turbo/libjpeg-turbo.git && cd libjpeg-turbo && git checkout b0971e47d && cd ..
 	[ ! -d ./BUILD ] && cp -R libjpeg-turbo BUILD
 
-	rm -rf ./BUILD
-	cp -R libjpeg-turbo BUILD
+	#rm -rf ./BUILD
+	#cp -R libjpeg-turbo BUILD
 
 	#setup targets# jdmarker.c:659
 	if [ "`sed -n 659p  BUILD/jdmarker.c`" != "abort();" ] ;then
@@ -57,13 +57,13 @@ if [ "$1" != "-" ] ; then
 	export LDFLAGS="-lpthread"
 
 	#1st compile
-	cd $DOWNLOAD_DIR/BUILD/
-	autoreconf -fiv
-	[ ! -e ./Makefile ] && ./configure --disable-shared
-	[ -e ./.libs/libturbojpeg.a ] && make clean
-	cd simd && make && cd .. && make libturbojpeg.la
+	#cd $DOWNLOAD_DIR/BUILD/
+	#autoreconf -fiv
+	#[ ! -e ./Makefile ] && AR=llvm-ar RANLIB=llvm-ranlib ./configure --disable-shared
+	#[ -e ./.libs/libturbojpeg.a ] && make clean
+	#cd simd && make && cd .. && make libturbojpeg.la
 	cd $SUBJECT
-	$CXX $CXXFLAGS $LDFLAGS -std=c++11 -v $SCRIPT_DIR/libjpeg_turbo_fuzzer.cc $TEST_SUITE_DIR/examples/example-hooks.cc -I BUILD BUILD/.libs/libturbojpeg.a  -o ${TARGET}_profiled
+	#$CXX $CXXFLAGS $LDFLAGS -std=c++11 -v $SCRIPT_DIR/libjpeg_turbo_fuzzer.cc $TEST_SUITE_DIR/examples/example-hooks.cc -I BUILD BUILD/.libs/libturbojpeg.a  -o ${TARGET}_profiled
 
 	# Clean up
 	cat $TMP_DIR/BBnames.txt | rev | cut -d: -f2- | rev | sort | uniq > $TMP_DIR/BBnames2.txt && mv $TMP_DIR/BBnames2.txt $TMP_DIR/BBnames.txt
@@ -71,8 +71,8 @@ if [ "$1" != "-" ] ; then
 
 	# Generate distance
 
-	$AFLGO/scripts/genDistance.sh $SUBJECT $TMP_DIR ${TARGET}_profiled
-	#cat $TMP_DIR/distance.callgraph.txt | sort | uniq > $TMP_DIR/distance.callgraph2.txt && mv $TMP_DIR/distance.callgraph2.txt $TMP_DIR/distance.callgraph.txt
+	#$AFLGO/scripts/genDistance.sh $SUBJECT $TMP_DIR ${TARGET}_profiled
+	cat $TMP_DIR/distance.callgraph.txt | sort | uniq > $TMP_DIR/distance.callgraph2.txt && mv $TMP_DIR/distance.callgraph2.txt $TMP_DIR/distance.callgraph.txt
 
 	echo "Distance values:"
 	head -n5 $TMP_DIR/distance.cfg.txt
@@ -84,22 +84,22 @@ if [ "$1" != "-" ] ; then
 	export CXXFLAGS="-distance=$TMP_DIR/distance.cfg.txt -outdir=$TMP_DIR"
 
 	#2nd compile
-	cd $DOWNLOAD_DIR/BUILD/	
-	./configure --disable-shared
-	if [ -d $TMP_DIR/rid_bbname_pairs.txt ];then
-		rm $TMP_DIR/rid_bbname_pairs.txt
-	fi
-	make clean
-	cd simd && make && cd .. && make libturbojpeg.la
+	#cd $DOWNLOAD_DIR/BUILD/	
+	#AR=llvm-ar RANLIB=llvm-ranlib ./configure --disable-shared
+	#if [ -d $TMP_DIR/rid_bbname_pairs ];then
+	#	rm -rf $TMP_DIR/rid_bbname_pairs $TMP_DIR/index $TMP_DIR/bb_branch_info
+	#fi 
+        #make clean
+	#cd simd && make && cd .. && make libturbojpeg.la
 
 	cd $SUBJECT
-	$CXX $CXXFLAGS $LDFLAGS -std=c++11 -v $SCRIPT_DIR/libjpeg_turbo_fuzzer.cc $TEST_SUITE_DIR/examples/example-hooks.cc -I BUILD BUILD/.libs/libturbojpeg.a  -o ${TARGET}_profiled
-	if [[ $AFLGO == *good ]];then
-		$AFLGO/scripts/index_all_cfg_edges.py -t $TMP_DIR
-		#$AFLGO/tutorial/samples/test/vis-dot.sh $TMP_DIR/dot-files
-	fi
+	#$CXX $CXXFLAGS $LDFLAGS -std=c++11 -v $SCRIPT_DIR/libjpeg_turbo_fuzzer.cc $TEST_SUITE_DIR/examples/example-hooks.cc -I BUILD BUILD/.libs/libturbojpeg.a  -o ${TARGET}_profiled
+	#if [[ $AFLGO == *good ]];then
+	#	$AFLGO/scripts/index_all_cfg_edges.py -t $TMP_DIR
+	#	#$AFLGO/tutorial/samples/test/vis-dot.sh $TMP_DIR/dot-files
+	#fi
 fi
-!
+
 cd $SUBJECT
 
 TIME=1m
@@ -119,7 +119,9 @@ if [ -f $TIME_RECORD_FILE ];then
 	rm $TIME_RECORD_FILE
 fi
 
-ITER=20
+ITER=30
+rm -rf ${TARGET}-tmp-results
+mkdir ${TARGET}-tmp-results
 for((i=1;i<=$((ITER));i++));  
 do
 if [ -d $DIR_OUT ]; then
@@ -127,10 +129,16 @@ if [ -d $DIR_OUT ]; then
 fi
 if [[ $AFLGO == *good ]];then
 	#gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR -x $AFLGO/dictionaries/jpeg.dict $SUBJECT/${TARGET}_profiled @@
-	/usr/bin/time -a -o $TIME_RECORD_FILE $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR -x $AFLGO/dictionaries/jpeg.dict $SUBJECT/${TARGET}_profiled @@
+	#/usr/bin/time -a -o $TIME_RECORD_FILE $AFLGO/afl-fuzz -S ${TARGET}_$((i))_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR -x $AFLGO/dictionaries/jpeg.dict $SUBJECT/${TARGET}_profiled @@
+	$AFLGO/afl-fuzz -S ${TARGET}_$((i))_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR -x $AFLGO/dictionaries/jpeg.dict $SUBJECT/${TARGET}_profiled @@
+	if [ "$?" != 0 ];then
+		exit
+	fi
 elif [[ $AFLGO == *origin ]];then
-	#gdb --args $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -x $AFLGO/dictionaries/jpeg.dict $SUBJECT/${TARGET}_profiled @@
-	/usr/bin/time -a -o $TIME_RECORD_FILE $AFLGO/afl-fuzz -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -x $AFLGO/dictionaries/jpeg.dict $SUBJECT/${TARGET}_profiled @@
+	#gdb --args $AFLGO/afl-fuzz -S ${TARGET}_$((i))_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -x $AFLGO/dictionaries/jpeg.dict $SUBJECT/${TARGET}_profiled @@
+	/usr/bin/time -a -o $TIME_RECORD_FILE $AFLGO/afl-fuzz -S ${TARGET}_$((i))_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -x $AFLGO/dictionaries/jpeg.dict $SUBJECT/${TARGET}_profiled @@
 fi
+mv $DIR_OUT/${TARGET}_$((i))_result  ${TARGET}-tmp-results/${TARGET}_$((i))_result
 done
+mv ${TARGET}-tmp-results/${TARGET}_*_result $DIR_OUT/
 popd

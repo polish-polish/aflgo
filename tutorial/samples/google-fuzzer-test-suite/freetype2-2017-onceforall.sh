@@ -6,11 +6,12 @@ TEST_SUITE_DIR=$WORK/fuzzer-test-suite
 
 if [ "$1" == "good" ];then
 AFLGO=/home/yangke/Program/AFL/aflgo/bak/aflgo-good
+cd $AFLGO && make && cd - &&  cd $AFLGO/llvm_mode && make && cd -
 DOWNLOAD_DIR=$WORK/build_good_${NAME}
 elif [ "$1" == "bad" ];then
 AFLGO=/home/yangke/Program/AFL/aflgo/bak/aflgo-origin
 DOWNLOAD_DIR=$WORK/build_bad_${NAME}
-elif [ "$1" != "-" ];then 
+elif [ "$1" != "-" ];then
 echo "INVALID 1st ARGUMENT:$1"
 exit
 fi
@@ -22,17 +23,17 @@ cd $DOWNLOAD_DIR
 
 SUBJECT=$DOWNLOAD_DIR
 TMP_DIR=$SUBJECT/temp
-:<<!
-if [ "$1" != "-" ] ; then
-	if [ -d $TMP_DIR ]; then
-		rm -rf $TMP_DIR
-	fi
-	mkdir $TMP_DIR
 
-	[ ! -d freetype2 ] && git clone git://git.sv.nongnu.org/freetype/freetype2.git && cd freetype2 && git checkout cd02d359a6d0455e9d16b87bf9665961c4699538 && cd ..
-	[ ! -d BUILD ] && cp -R freetype2 BUILD
-	rm -rf ./BUILD
-	cp -R freetype2 BUILD
+if [ "$1" != "-" ] ; then
+	#if [ -d $TMP_DIR ]; then
+	#	rm -rf $TMP_DIR
+	#fi
+	#mkdir $TMP_DIR
+
+	#[ ! -d freetype2 ] && git clone git://git.sv.nongnu.org/freetype/freetype2.git && cd freetype2 && git checkout cd02d359a6d0455e9d16b87bf9665961c4699538 && cd ..
+	#[ ! -d BUILD ] && cp -R freetype2 BUILD
+	#rm -rf ./BUILD
+	#cp -R freetype2 BUILD
 
 	#setup targets
 	if [ "`sed -n 1711p  BUILD/src/truetype/ttgload.c`" != "{abort();" ] ;then
@@ -50,13 +51,16 @@ if [ "$1" != "-" ] ; then
 	export CFLAGS="-g3 $ADDITIONAL"
 	export CXXFLAGS="-g3 $ADDITIONAL"
 	export LDFLAGS="-lpthread"
+	export AR=llvm-ar 
+        export AR_FLAGS=cr
+        export RANLIB=llvm-ranlib
 
 	#1st compile
-	./autogen.sh
-	./configure  --disable-shared --with-harfbuzz=no --with-bzip2=no --with-png=no
-	make
+	#./autogen.sh
+	#AR=llvm-ar AR_FLAGS=cr RANLIB=llvm-ranlib ./configure  --disable-shared --with-harfbuzz=no --with-bzip2=no --with-png=no
+	#make
 	cd $SUBJECT
-	$CXX $CXXFLAGS -std=c++11 -I BUILD/include -I BUILD/ BUILD/src/tools/ftfuzzer/ftfuzzer.cc $TEST_SUITE_DIR/examples/example-hooks.cc BUILD/objs/.libs/libfreetype.a -lpng -larchive -lbz2 -lz -o ${TARGET}_profiled
+	#$CXX $CXXFLAGS -std=c++11 -I BUILD/include -I BUILD/ BUILD/src/tools/ftfuzzer/ftfuzzer.cc $TEST_SUITE_DIR/examples/example-hooks.cc BUILD/objs/.libs/libfreetype.a -lpng -larchive -lbz2 -lz -o ${TARGET}_profiled
 
 	# Clean up
 	cat $TMP_DIR/BBnames.txt | rev | cut -d: -f2- | rev | sort | uniq > $TMP_DIR/BBnames2.txt && mv $TMP_DIR/BBnames2.txt $TMP_DIR/BBnames.txt
@@ -64,7 +68,7 @@ if [ "$1" != "-" ] ; then
 
 	# Generate distance
 
-	$AFLGO/scripts/genDistance.sh $SUBJECT $TMP_DIR ${TARGET}_profiled
+	#$AFLGO/scripts/genDistance.sh $SUBJECT $TMP_DIR ${TARGET}_profiled
 
 	echo "Distance values:"
 	head -n5 $TMP_DIR/distance.cfg.txt
@@ -76,15 +80,19 @@ if [ "$1" != "-" ] ; then
 
 	#2nd compile
 	cd $DOWNLOAD_DIR/BUILD/	
-	make clean && ./configure --disable-shared --with-harfbuzz=no --with-bzip2=no --with-png=no   && make
+	#AR=llvm-ar AR_FLAGS=cr RANLIB=llvm-ranlib ./configure --disable-shared --with-harfbuzz=no --with-bzip2=no --with-png=no
+        #if [ -d $TMP_DIR/rid_bbname_pairs ];then
+	#	rm -rf $TMP_DIR/rid_bbname_pairs $TMP_DIR/index $TMP_DIR/bb_branch_info
+	#fi
+        #make clean all
 	cd $SUBJECT
-	$CXX $CXXFLAGS -std=c++11 -I BUILD/include -I BUILD/ BUILD/src/tools/ftfuzzer/ftfuzzer.cc $TEST_SUITE_DIR/examples/example-hooks.cc BUILD/objs/.libs/libfreetype.a -lpng -larchive -lbz2 -lz -o ${TARGET}_profiled
-	if [[ $AFLGO == *good ]];then
-		$AFLGO/scripts/index_all_cfg_edges.py -t $TMP_DIR
+	#$CXX $CXXFLAGS -std=c++11 -I./BUILD/include -I./BUILD/ BUILD/src/tools/ftfuzzer/ftfuzzer.cc $TEST_SUITE_DIR/examples/example-hooks.cc ./BUILD/objs/.libs/libfreetype.a -lpng -larchive -lbz2 -lz -o ${TARGET}_profiled
+	#if [[ $AFLGO == *good ]];then
+	#	$AFLGO/scripts/index_all_cfg_edges.py -t $TMP_DIR
 		#$AFLGO/tutorial/samples/test/vis-dot.sh $TMP_DIR/dot-files
-	fi
+	#fi
 fi
-!
+
 
 TIME=40m
 DIR_IN=$DOWNLOAD_DIR/in
@@ -108,19 +116,30 @@ if [ -f $TIME_RECORD_FILE ]; then
 	rm $TIME_RECORD_FILE
 fi
 export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu/
-ITER=10
+ITER=20
+rm -rf ${TARGET}-tmp-results
+mkdir ${TARGET}-tmp-results
 for((i=1;i<=$((ITER));i++));
 do
 if [ "$DIR_IN" != "-" -a -d $DIR_OUT ]; then
 	rm -rf $DIR_OUT
 fi
 if [[ $AFLGO == *good ]];then
-	#gdb --args $AFLGO/afl-fuzz -m 100M -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
-	/usr/bin/time -a -o $TIME_RECORD_FILE $AFLGO/afl-fuzz -m 100M -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR  $SUBJECT/${TARGET}_profiled @@
+	#gdb --args $AFLGO/afl-fuzz -m 100M -S ${TARGET}_$((i))_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
+	#/usr/bin/time -a -o $TIME_RECORD_FILE $AFLGO/afl-fuzz -m 100M -S ${TARGET}_$((i))_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR  $SUBJECT/${TARGET}_profiled @@
+        $AFLGO/afl-fuzz -m 100M -S ${TARGET}_$((i))_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR  $SUBJECT/${TARGET}_profiled @@
+	if [ "$?" != 0 ];then
+		exit
+	fi
 elif [[ $AFLGO == *origin ]];then
-	#gdb --args $AFLGO/afl-fuzz -m 100M -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT $SUBJECT/${TARGET}_profiled @@
-	/usr/bin/time -a -o $TIME_RECORD_FILE $AFLGO/afl-fuzz -m 100M -S ${TARGET}_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT $SUBJECT/${TARGET}_profiled @@
+	#gdb --args $AFLGO/afl-fuzz -m 100M -S ${TARGET}_$((i))_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT $SUBJECT/${TARGET}_profiled @@
+	#/usr/bin/time -a -o $TIME_RECORD_FILE $AFLGO/afl-fuzz -m 100M -S ${TARGET}_$((i))_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT $SUBJECT/${TARGET}_profiled @@
+	$AFLGO/afl-fuzz -m 100M -S ${TARGET}_$((i))_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT $SUBJECT/${TARGET}_profiled @@
+	if [ "$?" != 0 ];then
+		exit
+	fi
 fi
+mv $DIR_OUT/${TARGET}_$((i))_result  ${TARGET}-tmp-results/${TARGET}_$((i))_result
 done
-
+mv ${TARGET}-tmp-results/${TARGET}_*_result $DIR_OUT/
 popd
