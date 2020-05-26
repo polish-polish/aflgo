@@ -118,7 +118,7 @@ protected:
 			GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
 			unsigned int cur_loc);
 
-	StringRef getStringInStrCmp(ICmpInst *ICmp);
+	std::string getStringInStrCmp(ICmpInst *ICmp);
 
 	void handleGetElementPtrInst(Value *insert_point, GetElementPtrInst * GEPI, GlobalVariable *AFLMapPtr,
 			GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
@@ -253,9 +253,9 @@ std::string AFLCoverage::getAnswerICmp(ICmpInst * ICmp){
 	Value * op1 = ICmp->getOperand(1);
 	ConstantInt * consop0 = dyn_cast < ConstantInt > (op0);
 	ConstantInt * consop1 = dyn_cast < ConstantInt > (op1);
-	StringRef sr= getStringInStrCmp(ICmp);
-	if(StringRef("").compare(sr)){
-		return "\""+sr.str()+"\"";
+	std::string sr= getStringInStrCmp(ICmp);
+	if(!sr.empty()){
+		return "\""+sr+"\"";
 	}
 	std::string result="";
 	std::stringstream ss;
@@ -453,7 +453,7 @@ void AFLCoverage::handleFCmpInst(Value *insert_point, FCmpInst * FCmp, GlobalVar
 	//Value * op1 = FCmp->getOperand(1);
 
 }
-StringRef AFLCoverage::getStringInStrCmp(ICmpInst *ICmp) {
+std::string AFLCoverage::getStringInStrCmp(ICmpInst *ICmp) {
 	if(ICmpInst::ICMP_EQ==ICmp->getPredicate()||ICmpInst::ICMP_NE==ICmp->getPredicate())
 	{
 		Value * op0 = ICmp->getOperand(0);
@@ -491,22 +491,24 @@ StringRef AFLCoverage::getStringInStrCmp(ICmpInst *ICmp) {
 							if (GlobalVariable *GV = dyn_cast<GlobalVariable>(const_str)){
 								if(GV->hasInitializer()){
 									Constant *v = GV->getInitializer();
+									debug(v,"Constant:");
 									if (ConstantDataArray *CA = dyn_cast<ConstantDataArray>(v)) {
 										debug(CA,"CA:");
 										if(CA->isCString()){
 											OKF("DETECT STR in strcmp strncmp memcmp:%s",CA->getAsCString().str().c_str());
-											return CA->getAsCString();
+											return CA->getAsCString().str();
 										}
+									}else{
+										//TODO :: handle this case
 									}
-								}else if(GV->isExternallyInitialized()){
-									//TODO :: handlet this case
 								}else{
-									//TODO :: handlet this case
-									return StringRef("PLEASE_REPLACE_ME");
+									//TODO :: handle this case
+									return GV->getName().str()+".PLEASE_REPLACE_ME";
 								}
 							}
 						}
 					}
+////these code won't be trigger if it return early;
 //					if(0==func->getName().compare(StringRef("memcmp"))){
 //						if(0==CI->getParent()->getParent()->getName().compare(StringRef("png_read_info"))){
 //							debug(arg0);
@@ -526,7 +528,7 @@ StringRef AFLCoverage::getStringInStrCmp(ICmpInst *ICmp) {
 			}
 		}
 	}
-	return StringRef("");
+	return std::string("");
 }
 int AFLCoverage::handleStrCmp(ICmpInst *ICmp, GlobalVariable *AFLMapPtr,
 		GlobalVariable *AFLPrevLoc, BasicBlock & BB, Module &M,
