@@ -3659,6 +3659,10 @@ static CFG * loadFuncCFG(char * fname) {
 		if(p){
 			answer_str=strdup((char*)*p);
 			//FATAL("%s %s->%s",fname,key_str,(char*)*p);
+			if(0==strcmp("\"PLEASE_REPLACE_ME\"",answer_str)){
+				free(answer_str);
+				answer_str=NULL;
+			}
 		}
 		Node * node=(Node *)malloc(sizeof(Node));
 		char * bbname=strtok(key_str,";");
@@ -4307,9 +4311,10 @@ static inline int is_bijection_maped(LinkedPosition *p){
 				if(p->fmap[i].valid && p->fmap[j].valid){
 					if(p->fmap[i].trace_len==p->fmap[j].trace_len){
 						if(p->fmap[i].output!=p->fmap[j].output){
-							u8 sub1=p->fmap[i].output-p->fmap[j].output;
-							u64 sub2=p->fmap[i].input-p->fmap[j].input;
-							OKF("%llx,%x",sub1+sub2,sub1-sub2);
+							u64 sub1=p->fmap[i].output-p->fmap[j].output;
+							u8 sub2=p->fmap[i].input-p->fmap[j].input;
+							OKF("delta_o:%x,delta_i:%x",sub1,sub2);
+							OKF("s1+s2:%llx,s1-s2:%llx",sub1+sub2,sub1-sub2);
 							if(sub2+sub1==0||sub2-sub1==0||(sub1%sub2==0&&(sub1/sub2)%256==0)){
 								directed_read=1;
 								OKF("!!1");
@@ -4318,7 +4323,6 @@ static inline int is_bijection_maped(LinkedPosition *p){
 						}
 					}
 				}
-
 			}
 		}
 	}

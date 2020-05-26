@@ -469,7 +469,9 @@ StringRef AFLCoverage::getStringInStrCmp(ICmpInst *ICmp) {
 		if(op){
 			if(CallInst * CI = dyn_cast < CallInst > (op)){
 				Function *func = CI->getCalledFunction();
-				if (func && (0==func->getName().compare(StringRef("strcmp"))||0==func->getName().compare(StringRef("strncmp")))){
+				if (func && (0==func->getName().compare(StringRef("strcmp"))
+						||0==func->getName().compare(StringRef("strncmp"))
+						||0==func->getName().compare(StringRef("memcmp")))){
 					Value * arg0=CI->getArgOperand(0);
 					Value * arg1=CI->getArgOperand(1);
 					ConstantExpr  * const_expr0 = dyn_cast < ConstantExpr > (arg0);
@@ -482,20 +484,45 @@ StringRef AFLCoverage::getStringInStrCmp(ICmpInst *ICmp) {
 					}
 					if(const_expr){
 						Instruction * inst_expr=const_expr->getAsInstruction();
+						debug(inst_expr,"inst_expr:");
 						if(GetElementPtrInst  * CIST = dyn_cast < GetElementPtrInst > (inst_expr)){
 							Value * const_str=CIST->getPointerOperand();
+							debug(const_str,"getPointerOperand:");
 							if (GlobalVariable *GV = dyn_cast<GlobalVariable>(const_str)){
-								Constant *v = GV->getInitializer();
-								if (ConstantDataArray *CA = dyn_cast<ConstantDataArray>(v)) {
-									if(CA->isCString()){
-										OKF("DETECT STRCMP:%s",CA->getAsCString().str().c_str());
-										return CA->getAsCString();
+								if(GV->hasInitializer()){
+									Constant *v = GV->getInitializer();
+									if (ConstantDataArray *CA = dyn_cast<ConstantDataArray>(v)) {
+										debug(CA,"CA:");
+										if(CA->isCString()){
+											OKF("DETECT STR in strcmp strncmp memcmp:%s",CA->getAsCString().str().c_str());
+											return CA->getAsCString();
+										}
 									}
+								}else if(GV->isExternallyInitialized()){
+									//TODO :: handlet this case
+								}else{
+									//TODO :: handlet this case
+									return StringRef("PLEASE_REPLACE_ME");
 								}
 							}
 						}
 					}
-				}//else it is a indirect call
+//					if(0==func->getName().compare(StringRef("memcmp"))){
+//						if(0==CI->getParent()->getParent()->getName().compare(StringRef("png_read_info"))){
+//							debug(arg0);
+//							debug(arg1);
+//							if(!const_expr0){
+//								OKF("!const_expr0");
+//							}
+//							if(!const_expr1){
+//								OKF("!const_expr1");
+//							}
+//							FATAL("FIND IT");
+//						}
+//					}
+				}else{//it is a indirect call
+					//TODO :: handlet this case
+				}
 			}
 		}
 	}
@@ -534,8 +561,8 @@ int AFLCoverage::handleStrCmp(ICmpInst *ICmp, GlobalVariable *AFLMapPtr,
 				if(vAddress){
 					OKF("#mapValue3#");
 					mapValue3(CI, vAddress, AFLMapPtr, AFLPrevLoc, BB, M, cur_loc);
-//					if(0==func->getName().compare(StringRef("strncmp"))){
-//						if(0==BB.getParent()->getName().compare(StringRef("demangle_prefix"))){
+//					if(0==func->getName().compare(StringRef("memcmp"))){
+//						if(0==BB.getParent()->getName().compare(StringRef("png_read_info"))){
 //							debug(arg0);
 //							debug(arg1);
 //							if(!const_expr0){
@@ -1311,9 +1338,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 				{
 					OKF("#Dump branch info to %s",
 						(bb_branch_info_dir + "/" + F.getName().str() +".bb_branch_info.txt\n").c_str());
-					bb_branch_info.open(bb_branch_info_dir + "/" + F.getName().str() +".bb_branch_info.txt",
-											std::ofstream::out);
-					bb_branch_info.close();
+
 					bb_branch_info.open(bb_branch_info_dir + "/" + F.getName().str() +".bb_branch_info.txt",
 						std::ofstream::out | std::ofstream::app);
 				}
