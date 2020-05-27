@@ -4313,7 +4313,7 @@ static inline int is_bijection_maped(LinkedPosition *p){
 						if(p->fmap[i].output!=p->fmap[j].output){
 							u64 sub1=p->fmap[i].output-p->fmap[j].output;
 							u8 sub2=p->fmap[i].input-p->fmap[j].input;
-							OKF("delta_o:%x,delta_i:%x",sub1,sub2);
+							OKF("delta_o:%llx,delta_i:%x",sub1,sub2);
 							OKF("s1+s2:%llx,s1-s2:%llx",sub1+sub2,sub1-sub2);
 							if(sub2+sub1==0||sub2-sub1==0||(sub1%sub2==0&&(sub1/sub2)%256==0)){
 								directed_read=1;
