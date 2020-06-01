@@ -502,7 +502,11 @@ std::string AFLCoverage::getStringInStrCmp(ICmpInst *ICmp) {
 										//TODO :: handle this case
 									}
 								}else{
-									//TODO :: handle this case
+//									Module * M = ICmp->getParent()->getParent()->getParent();
+//									if(M->getName().str().find("pngread.c")!=std::string::npos){
+//									    FATAL("Module:%s",M->getName().str().data());
+//									}
+//									//TODO :: handle this case
 									return GV->getName().str()+".PLEASE_REPLACE_ME";
 								}
 							}
@@ -924,8 +928,8 @@ void AFLCoverage::mapValue3(Value *insert_point, Value *vAddress, GlobalVariable
 
 	LoadInst * ch = IRB.CreateLoad(Int8Ty,vAddress);
 	debug(ch,"myCHAR\t");
-
-	StoreInst *myStore = IRB.CreateStore(ch, MapValuePtr);//ConstantInt::get(LargestType, instrument_cnt)
+	Value *  casted_ch=IRB.CreateZExt(ch,LargestType);
+	StoreInst *myStore = IRB.CreateStore(casted_ch, MapValuePtr);//ConstantInt::get(LargestType, instrument_cnt)
 	myStore->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
 	debug(myStore,"myStore\t");
 

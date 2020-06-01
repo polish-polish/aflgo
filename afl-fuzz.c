@@ -433,7 +433,7 @@ typedef struct LinkListInteger{
 	int len;
 	struct LinkedInteger * head;
 } LinkListInteger;
-#define FMAP_LEN 6 //make sure 1<FMAP_LEN<9
+#define FMAP_LEN 8 //make sure 7<FMAP_LEN
 typedef struct FMap{
 	u8  input;
 	u64 output;
@@ -3659,7 +3659,7 @@ static CFG * loadFuncCFG(char * fname) {
 		if(p){
 			answer_str=strdup((char*)*p);
 			//FATAL("%s %s->%s",fname,key_str,(char*)*p);
-			if(0==strcmp("\"PLEASE_REPLACE_ME\"",answer_str)){
+			if(strstr(answer_str,"\"PLEASE_REPLACE_ME\"")){
 				free(answer_str);
 				answer_str=NULL;
 			}

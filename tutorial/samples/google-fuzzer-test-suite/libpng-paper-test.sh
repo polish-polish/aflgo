@@ -92,15 +92,16 @@ if [ "$2" != "-" ] ; then
 
 	#2nd compile
 	cd $DOWNLOAD_DIR/BUILD/	
-	#AR=llvm-ar ./configure --disable-shared
-	#if [ -d $TMP_DIR/rid_bbname_pairs ];then
-	#	rm -rf $TMP_DIR/rid_bbname_pairs $TMP_DIR/index $TMP_DIR/bb_branch_info
-	#fi
-        #make clean all
+	AR=llvm-ar ./configure --disable-shared
+	if [ -d $TMP_DIR/rid_bbname_pairs ];then
+		rm -rf $TMP_DIR/rid_bbname_pairs $TMP_DIR/index $TMP_DIR/bb_branch_info
+	fi
+        make clean all
 	cd $SUBJECT 
-	#$CXX $CXXFLAGS $LDFLAGS -std=c++11 -v  $TEST_SUITE_DIR/libpng-1.2.56/target.cc $TEST_SUITE_DIR/examples/example-hooks.cc $DOWNLOAD_DIR/BUILD/.libs/libpng12.a -I $DOWNLOAD_DIR/BUILD/ -lz -o ${TARGET}_profiled
+	$CXX $CXXFLAGS $LDFLAGS -std=c++11 -v  $TEST_SUITE_DIR/libpng-1.2.56/target.cc $TEST_SUITE_DIR/examples/example-hooks.cc $DOWNLOAD_DIR/BUILD/.libs/libpng12.a -I $DOWNLOAD_DIR/BUILD/ -lz -o ${TARGET}_profiled
 	#if [[ $AFLGO == *good ]];then
-	#	$AFLGO/scripts/index_all_cfg_edges.py -t $TMP_DIR
+		$AFLGO/scripts/index_all_cfg_edges.py -t $TMP_DIR
+		$AFLGO/scripts/fix_bb_branch_info.py -t $TMP_DIR -c $DOWNLOAD_DIR/BUILD/
 	#	#$AFLGO/tutorial/samples/test/vis-dot.sh $TMP_DIR/dot-files
 	#fi	
 fi
@@ -148,7 +149,7 @@ if [[ $AFLGO == *good ]];then
 	#gdb --args $AFLGO/afl-fuzz -S ${TARGET}_$((i))_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR -x $AFLGO/dictionaries/png.dict $SUBJECT/${TARGET}_profiled @@
 	#/usr/bin/time -a -o $TIME_RECORD_FILE $AFLGO/afl-fuzz -S ${TARGET}_$((i))_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR -x $AFLGO/dictionaries/png.dict $SUBJECT/${TARGET}_profiled @@
         #$AFLGO/afl-fuzz -S ${TARGET}_$((i))_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR -x $AFLGO/dictionaries/png.dict $SUBJECT/${TARGET}_profiled @@
-	$AFLGO/afl-fuzz -S ${TARGET}_$((i))_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
+	gdb --args $AFLGO/afl-fuzz -S ${TARGET}_$((i))_result -z exp -c $TIME -i $DIR_IN -o $DIR_OUT -E $TMP_DIR $SUBJECT/${TARGET}_profiled @@
                 
 	if [ "$?" != 0 ];then
 		exit
