@@ -1745,11 +1745,6 @@ EXP_ST void setup_shm(void) {
   trace_bits = shmat(shm_id, NULL, 0);
   
   if (!trace_bits) PFATAL("shmat() failed");
-#ifdef __x86_64__
-  memset(trace_bits, 255, MAP_SIZE + 16 + (MAP_SIZE<<3));
-#else
-  memset(trace_bits, 255, MAP_SIZE + 8 + (MAP_SIZE<<2));
-#endif
 }
 
 
@@ -2654,6 +2649,11 @@ static u8 run_target(char** argv, u32 timeout) {
      territory. */
 
   memset(trace_bits, 0, MAP_SIZE + 16);
+#ifdef __x86_64__
+  memset(trace_bits + MAP_SIZE + 16, 255, (MAP_SIZE<<3));
+#else
+  memset(trace_bits + MAP_SIZE + 16, 255, (MAP_SIZE<<2));
+#endif
   MEM_BARRIER();
 
   /* If we're running in "dumb" mode, we can't rely on the fork server
