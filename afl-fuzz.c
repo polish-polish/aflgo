@@ -156,7 +156,10 @@ EXP_ST u8* trace_bits;                /* SHM with instrumentation bitmap  */
 
 EXP_ST u8  virgin_bits[MAP_SIZE],     /* Regions yet untouched by fuzzing */
            virgin_tmout[MAP_SIZE],    /* Bits we haven't seen in tmouts   */
-           virgin_crash[MAP_SIZE];    /* Bits we haven't seen in crashes  */
+           virgin_crash[MAP_SIZE],    /* Bits we haven't seen in crashes  */
+           mask[MAP_SIZE<<3];      /* mark valid edge coverage as bit
+                                         map for directed fuzzing
+                                         # add by yangke #                */
 
 #ifdef __x86_64__
 EXP_ST u64 virgin_var_bits[MAP_SIZE]; /* Regions yet untouched by fuzzing,
@@ -267,7 +270,9 @@ struct queue_entry {
       fs_redundant;                   /* Marked as redundant in the fs?   */
 
   u32 bitmap_size,                    /* Number of bits set in bitmap     */
-      exec_cksum;                     /* Checksum of the execution trace  */
+      exec_cksum,                     /* Checksum of the execution trace  */
+	  valid_cov;                      /* Coverage change of valid cfg edges
+                                         add by yangke   */
 
   u64 exec_us,                        /* Execution time (us)              */
       handicap,                       /* Number of queue cycles behind    */
@@ -354,6 +359,9 @@ static u32 max_trace_len=0;
 static u32 cur_trace_len=0;
 static double avg_hit_cnt=0.0;
 static u32 trace_classes=0;
+static u8 is_mask_ready=0;
+static u8 mask_match_one=0;
+static u8 valid_cov_change=0;
 
 enum {
   /* 00 */ FIELD_BASED,                   /* Field-based condition           */
@@ -994,6 +1002,11 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
   if(cur_trace_len>max_trace_len) {
 	  max_trace_len= cur_trace_len;
   }
+  q->valid_cov=0;
+  if(valid_cov_change){
+	  q->valid_cov=valid_cov_change;
+	  valid_cov_change=0;
+  }
   /* add by yangke end */
   if (cur_distance > 0) {
 
@@ -1098,8 +1111,82 @@ EXP_ST void read_bitmap(u8* fname) {
 
    This function is called after every exec() on a fairly large buffer, so
    it needs to be fast. We do this in 32-bit and 64-bit flavors. */
-
 static inline u8 has_new_bits(u8* virgin_map) {
+
+	  u8* current = (u64*)trace_bits;
+	  u8* virgin  = (u64*)virgin_map;
+
+	  u32  i = 0;
+#ifdef __x86_64__
+
+  /* Calculate distance of current input to targets */
+  u64* total_distance = (u64*) (trace_bits + MAP_SIZE);
+  u64* total_count = (u64*) (trace_bits + MAP_SIZE + 8);
+
+#else
+
+  /* Calculate distance of current input to targets */
+  u32* total_distance = (u32*)(trace_bits + MAP_SIZE);
+  u32* total_count = (u32*)(trace_bits + MAP_SIZE + 4);
+
+#endif /* ^__x86_64__ */
+
+  if (*total_count > 0)
+    {cur_distance = (double) (*total_distance) / (double) (*total_count);
+    FATAL("cur_dis:%03f",cur_distance);}
+  else
+    cur_distance = -1.0;
+
+  cur_trace_len=trace_len(trace_bits);
+
+  u8   ret = 0;
+
+  while (i<MAP_SIZE) {
+
+    /* Optimize for (*current & *virgin) == 0 - i.e., no bits in current bitmap
+       that have not been already cleared from the virgin map - since this will
+       almost always be the case. */
+	int offset=i++;
+
+	if (unlikely(*current) && unlikely(*current & *virgin)) {
+		    if(!is_mask_ready){
+				if (likely(ret < 2)) {
+					if (*current && *virgin == 0xff) {
+						ret = 2;
+					}
+					else ret = 1;
+				}
+				*virgin &= ~*current;
+			}else if(mask[offset>>3]&(0x80>>(offset%8))){
+				//mask_match_one=1;
+				valid_cov_change+=1;WARNF("HIT:offset:%x,num:%d",offset,valid_cov_change);
+				if (likely(ret < 2)) {
+					if (*current && *virgin == 0xff) {
+						ret = 2;
+					}
+					else ret = 1;
+				}
+				*virgin &= ~*current;
+            }else if(!mask_match_one){
+            	if (likely(ret < 2)) {
+					if (*current && *virgin == 0xff) {
+						ret = 2;
+					}
+					else ret = 1;
+				}
+				*virgin &= ~*current;
+            }
+    }
+	current++;
+	virgin++;
+  }
+
+  if (ret && virgin_map == virgin_bits) bitmap_changed = 1;
+
+  return ret;
+
+}
+static inline u8 has_new_bit(u8* virgin_map) {
 
 #ifdef __x86_64__
 
@@ -1415,13 +1502,13 @@ static const u8 simplify_lookup[256] = {
 #ifdef __x86_64__
 
 static void simplify_trace(u64* mem) {
-
+/*
   u32 i = MAP_SIZE >> 3;
 
   while (i--) {
-
+*/
     /* Optimize for sparse bitmaps. */
-
+/*
     if (unlikely(*mem)) {
 
       u8* mem8 = (u8*)mem;
@@ -1440,6 +1527,7 @@ static void simplify_trace(u64* mem) {
     mem++;
 
   }
+*/
 
 }
 
@@ -1667,7 +1755,10 @@ static void cull_queue(void) {
   q = queue;
 
   while (q) {
-    q->favored = 0;
+    /*add by yangke start*/
+	//if(!q->valid_cov)
+	/*add by yangke end*/
+	q->favored = 0;
     q = q->next;
   }
 
@@ -3791,6 +3882,8 @@ static CFG * loadFuncCFG(char * fname) {
 	cfg_loaded=1;
 	return cfg;
 }
+static void loadSlicedMask();
+static int loadSlicedMaskFunc(char * fname, char*content);
 static void loadCFG()
 {
 	u8 *fn = alloc_printf("%s/%s",temp_dir, "/distance.callgraph.txt");
@@ -3814,7 +3907,138 @@ static void loadCFG()
 	}
 	ck_free(fn);
 	fclose(f);
+	loadSlicedMask();
 }
+
+static void loadSlicedMask()
+{
+	is_mask_ready=0;
+	int load=0;
+	memset(mask,0,MAP_SIZE>>3);
+	struct dirent *filename;
+	u8 *dirname = alloc_printf("%s/%s",temp_dir, "sliced_cfgs");
+
+	DIR *dir = opendir(dirname);
+	 if(dir == NULL)
+	 {
+	  FATAL("open dir %s error!\n",dirname);
+	  exit(1);
+	 }
+
+	 while((filename = readdir(dir)) != NULL)
+	 {
+		if(!strcmp(filename->d_name,".")||!strcmp(filename->d_name,".."))
+		continue;
+		u8* fn=alloc_printf("%s/%s",dirname,filename->d_name);
+
+		//struct stat s;
+		//lstat(path,&s);
+		//if(S_ISDIR(s.st_mode)) {listAllFiles(path);}
+
+		char * fname=strtok(filename->d_name,".");
+		FILE * f;
+		if (!(f = fopen(fn, "r"))) {
+			ck_free(fn);
+			FATAL("No such file or directory: %s",fn);
+			return;
+
+	  }
+	  ck_free(fn);
+	  fseek (f , 0 , SEEK_END);
+	  int file_size=ftell( f );
+	  if(file_size==0){
+		  fclose(f);
+		  continue;
+	  }
+	  rewind (f);
+	  char * content=(char*)malloc(file_size*sizeof(char));
+	  size_t result=fread(content, 1,file_size, f);
+	  if (result != file_size) {FATAL("Reading error,result=%lu,file_size=%d",result,file_size);}
+	  fclose(f);
+      if(loadSlicedMaskFunc(fname,content)){
+    	  load=1;
+      }
+      free(content);
+	 }
+	 is_mask_ready=load;
+	 /*if(is_mask_ready){
+		 u64* p=mask;
+		 for(int i=0;i<MAP_SIZE>>6;i+=8){
+			OKF("%x %x %x %x %x %x %x %x",p[i],p[i+1],p[i+2],p[i+3],p[i+4],p[i+5],p[i+6],p[i+7]);
+		}
+	 }*/
+	 closedir(dir);
+}
+static int loadSlicedMaskFunc(char * fname, char*content)
+{
+
+
+	for (int i=0;i<CFGs->cur_size;i++) {
+		CFG * cfg=(CFG *)CFGs->elements[i];
+		if(strcmp(cfg->fname,fname)) continue;
+		if(!strcmp(cfg->fname,"free")) continue;
+		if(!strcmp(cfg->fname,"malloc")) continue;
+		if(!strcmp(cfg->fname,"strcmp")) continue;
+		if(!strcmp(cfg->fname,"strstr")) continue;
+		if(!strcmp(cfg->fname,"strcpy")) continue;
+		if(!strcmp(cfg->fname,"strncpy")) continue;
+		if(!strcmp(cfg->fname,"strtok")) continue;
+		if(!strcmp(cfg->fname,"memcpy")) continue;
+		if(!strcmp(cfg->fname,"memcmp")) continue;
+		if(!strcmp(cfg->fname,"memset")) continue;
+		if(!strcmp(cfg->fname,"fread")) continue;
+		if(!strcmp(cfg->fname,"fwrite")) continue;
+		if(!strcmp(cfg->fname,"fopen")) continue;
+		if(!strcmp(cfg->fname,"fclose")) continue;
+		if(!strcmp(cfg->fname,"atoi")) continue;
+		if(!strcmp(cfg->fname,"gets")) continue;
+		if(!strcmp(cfg->fname,"puts")) continue;
+		int load=0;
+		//OKF("load %s.txt start",fname);
+		if(!cfg->rid2node) FATAL("CFG of %s() is empty! rid2node=(nil)",cfg->fname);
+		map_void_t * rid2node = cfg->rid2node;
+		const char *rid_str;
+		map_iter_t node_iter = map_iter(rid2node);
+		while ((rid_str = map_next(rid2node, &node_iter))) {
+			void **p=map_get(rid2node, rid_str);
+			if(!p) FATAL("rid2node is broken, rid=%p,node=(nil)",rid_str);
+			Node * node_from = (Node *)*p;
+			if(node_from->successors){
+				const char *to_rid_str;
+				map_iter_t node_iter = map_iter(node_from->successors);
+				while ((to_rid_str = map_next(node_from->successors, &node_iter))) {
+					void **q=map_get(rid2node, to_rid_str);
+					if(!q) FATAL("rid2node is broken, rid=%p,node=(nil)",rid_str);
+					Node * node_to = (Node *)*q;
+					//FATAL("%s->%s,%s->%s",rid_str,to_rid_str,node_from->bbname,node_to->bbname);
+					char* signature=NULL;
+					if(!strstr(node_from->bbname,"@")&&!strstr(node_to->bbname,"@")){
+						signature=alloc_printf("%s,%s",node_from->bbname,node_to->bbname);
+					}else if(strstr(node_from->bbname,"@")&&!strstr(node_to->bbname,"@")){
+						signature=alloc_printf("\n,%s",node_to->bbname);
+					}else if(!strstr(node_from->bbname,"@")&&strstr(node_to->bbname,"@")){
+						signature=alloc_printf("%s,\n",node_from->bbname);
+					}else{//@->@ this really will happen!!!
+					}
+					if(signature && strstr(content,signature)){
+						int pos=(node_from->rid<<1)^node_to->rid;
+						int offset=pos%8;
+						mask[pos>>3]|=(0x80>>offset);
+						//WARNF("edge:%d",pos);
+						load=1;
+					}
+					ck_free(signature);
+				}
+			}
+		}
+		//OKF("load %s.txt finish",fname);
+		return load;
+    }
+	return 0;
+}
+
+
+
 
 static int at_least_one_margin_updated=0;
 
@@ -3828,7 +4052,6 @@ static int update_margin_bbs(int len)
 	int updated=0;
 	at_least_one_margin_updated=0;
 	margin_bb_count=0;
-
 	for (int i=0;i<CFGs->cur_size;i++) {
 		/*1. update coverage information and clean margin*/
 		CFG * cfg=(CFG *)CFGs->elements[i];
@@ -3928,6 +4151,7 @@ static int update_margin_bbs(int len)
 								target_bb->born_cycle=queue_cycle;
 								strcpy(target_bb->function,fname);
 								OKF("len=%d",len);
+								OKF("target_bb:%s",target_bb->node->bbname);
 								updated=1;
 							}
 
@@ -4384,8 +4608,8 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     /* add by yangke start */
 	hnb = has_new_bits(virgin_bits);
 	if (!cfg_loaded) loadCFG();
-    if (cur_distance<0) return 0;
-    if (cur_distance>min_distance+20) return 0;
+    //if (cur_distance<0) return 0;
+    //if (cur_distance>min_distance+5) return 0;
 
 //	if (target_bb->node) mut_prior_mode=1;//open if we can detect target
 //	if (queue_cur->exec_path_len==0){
@@ -4403,6 +4627,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     int trigger_target=0;
 	if(target_bb->node && (0xffffffffffffffff!=cur[target_bb->node->rid])){//trigger target
 		trigger_target=1;
+        OKF("Trigger:%s",target_bb->node->bbname);
 //		switch (target_bb->node->branch_type)
 //		{
 //			case UNKNOWN:
@@ -4462,7 +4687,9 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 //					  }
 //				}
 //		}
-	}
+	}/*else{
+             if(cycles_wo_finds<1)return 0;
+        }*/
     if (!hnb) {
     	if (crash_mode) total_crashes++;
     	return 0;
@@ -4649,7 +4876,9 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 #endif /* ^!SIMPLE_FILES */
 
       unique_crashes++;
+
       /* add by yangke start */
+      if(unique_crashes==100){
       OKF("First Crash is Achieved! Exit now!");
       u8 * statistic_file_name=alloc_printf("%s/statistics", out_dir);
       u8 * info=alloc_printf("mon/rand mut_times:%d|%d,%0.2f,win_times,%d|%d\n",monitor_mut,random_mut,(float)monitor_mut/(float)random_mut,monitor_win,random_win);
@@ -4677,6 +4906,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 	  ck_free(sync_id);
       alloc_report();
       exit(0);
+      }
       /* add by yangke end */
 
       last_crash_time = get_cur_time();
@@ -6184,7 +6414,9 @@ static u32 calculate_score(struct queue_entry* q) {
     }// else WARNF ("Normalized distance negative: %f", normalized_d);
 
   }
-
+  /*add by yangke start*/
+  //perf_score*=1<<q->valid_cov;
+  /*add by yangke start*/
   perf_score *= power_factor;
 
   /* Make sure that we don't go over limit. */
@@ -8696,6 +8928,7 @@ havoc_stage:
 //    	 }
 //    	 record_mutation(arg[0]);
 //       origin AFLGO setting
+         
     	 arg[0]=UR(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0));//original AFLGO setting
     	 arg[1]=-1;// be careful when it is used as the initial value is invalid pos -1
 
