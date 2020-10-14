@@ -379,6 +379,7 @@ enum {
 typedef struct BasicBlock{
 	int rid;
 	char bbname[256];
+	char bbrange[40];
 	double distance;//distance
 	u8 cov;//cov:1,uncov:0
 	u8 out_degree;
@@ -1132,8 +1133,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
 #endif /* ^__x86_64__ */
 
   if (*total_count > 0)
-    {cur_distance = (double) (*total_distance) / (double) (*total_count);
-    FATAL("cur_dis:%03f",cur_distance);}
+    cur_distance = (double) (*total_distance) / (double) (*total_count);
   else
     cur_distance = -1.0;
 
@@ -1159,7 +1159,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
 				*virgin &= ~*current;
 			}else if(mask[offset>>3]&(0x80>>(offset%8))){
 				//mask_match_one=1;
-				valid_cov_change+=1;WARNF("HIT:offset:%x,num:%d",offset,valid_cov_change);
+				valid_cov_change+=1;//WARNF("HIT:offset:%x,num:%d",offset,valid_cov_change);
 				if (likely(ret < 2)) {
 					if (*current && *virgin == 0xff) {
 						ret = 2;
@@ -1186,7 +1186,100 @@ static inline u8 has_new_bits(u8* virgin_map) {
   return ret;
 
 }
-static inline u8 has_new_bit(u8* virgin_map) {
+static inline u8 has_new_bits3(u8* virgin_map) {
+
+#ifdef __x86_64__
+
+  u64* current = (u64*)trace_bits;
+  u64* virgin  = (u64*)virgin_map;
+
+  u32  i = (MAP_SIZE >> 3);
+
+  /* Calculate distance of current input to targets */
+  u64* total_distance = (u64*) (trace_bits + MAP_SIZE);
+  u64* total_count = (u64*) (trace_bits + MAP_SIZE + 8);
+
+  if (*total_count > 0)
+    cur_distance = (double) (*total_distance) / (double) (*total_count);
+  else
+    cur_distance = -1.0;
+
+  cur_trace_len=trace_len(trace_bits);
+
+#else
+
+  u32* current = (u32*)trace_bits;
+  u32* virgin  = (u32*)virgin_map;
+
+  u32  i = (MAP_SIZE >> 2);
+
+  /* Calculate distance of current input to targets */
+  u32* total_distance = (u32*)(trace_bits + MAP_SIZE);
+  u32* total_count = (u32*)(trace_bits + MAP_SIZE + 4);
+
+  if (*total_count > 0) {
+    cur_distance = (double) (*total_distance) / (double) (*total_count);
+  else
+    cur_distance = -1.0;
+
+#endif /* ^__x86_64__ */
+
+  u8   ret = 0;
+
+  while (i--) {
+
+    /* Optimize for (*current & *virgin) == 0 - i.e., no bits in current bitmap
+       that have not been already cleared from the virgin map - since this will
+       almost always be the case. */
+
+    if (unlikely(*current) && unlikely(*current & *virgin)) {
+
+      if (likely(ret < 2)) {
+
+        u8* cur = (u8*)current;
+        u8* vir = (u8*)virgin;
+
+        /* Looks like we have not found any new bytes yet; see if any non-zero
+           bytes in current[] are pristine in virgin[]. */
+
+#ifdef __x86_64__
+
+        if ((cur[0] && vir[0] == 0xff) || (cur[1] && vir[1] == 0xff) ||
+            (cur[2] && vir[2] == 0xff) || (cur[3] && vir[3] == 0xff) ||
+            (cur[4] && vir[4] == 0xff) || (cur[5] && vir[5] == 0xff) ||
+            (cur[6] && vir[6] == 0xff) || (cur[7] && vir[7] == 0xff)) {
+        	ret = 2;
+        }
+        else ret = 1;
+        if(mask[current-(u64*)trace_bits]) {
+        	valid_cov_change+=ret;
+        }
+
+#else
+
+        if ((cur[0] && vir[0] == 0xff) || (cur[1] && vir[1] == 0xff) ||
+            (cur[2] && vir[2] == 0xff) || (cur[3] && vir[3] == 0xff)) ret = 2;
+        else ret = 1;
+
+#endif /* ^__x86_64__ */
+
+      }
+
+      *virgin &= ~*current;
+
+    }
+
+    current++;
+    virgin++;
+
+  }
+
+  if (ret && virgin_map == virgin_bits) bitmap_changed = 1;
+
+  return ret;
+
+}
+static inline u8 has_new_bits2(u8* virgin_map) {
 
 #ifdef __x86_64__
 
@@ -3724,6 +3817,32 @@ static CFG * loadFuncCFG(char * fname) {
 	ck_free(fn);
 	fclose(f);
 
+	/** add 2020.10.12 start */
+	map_void_t bb_name_range_dict;
+	map_init(&bb_name_range_dict);
+	fn = alloc_printf("%s/rid_bbname_pairs/%s.bb_range_dict.txt", temp_dir, fname);
+	if (!(f = fopen(fn, "r"))) {
+		ck_free(fn);
+		FATAL("No such file or directory: %s",fn);
+	}
+	while (fgets(tmp, MAX_LINE, f)) {
+		if(0==strcmp(tmp,""))continue;
+		if(strstr(tmp,"@"))continue;
+		char * fi = strchr(tmp,';');
+		if(!fi){
+			FATAL("%s",tmp);
+		}
+		OKF("RANGE:%s\n",fi+1);
+		char * last=strdup(++fi);//strdup is required as the tmp string will be recycle
+		last[strlen(last)-1]='\0';//remove the return character
+		char * name=strdup(strtok(tmp,";"));//char * incr_id=strtok(tmp,"|");
+		OKF("NAME:%s\n",name);
+		map_set(&bb_name_range_dict,name,last);
+	}
+	ck_free(fn);
+	fclose(f);
+	/** add 2020.10.12 start */
+
 	/*1. init vetex_index */
 	fn = alloc_printf("%s/index/%s.node_index.txt",temp_dir, fname);
 
@@ -3756,14 +3875,27 @@ static CFG * loadFuncCFG(char * fname) {
 				answer_str=NULL;
 			}
 		}
+
 		Node * node=(Node *)malloc(sizeof(Node));
 		char * bbname=strtok(key_str,";");
-		if (strlen(bbname)==0)
+		if (strlen(bbname)==0){
 			strcpy(node->bbname,"@");
-		else{
+			strcpy(node->bbrange,"");
+			FATAL("THIS SHOULD NOT HAPPEN! %s",fname);
+		}else if (strstr(bbname,"@")){
+			strcpy(node->bbname,"@");
+			strcpy(node->bbrange,"");
+		}else{
 			strcpy(node->bbname,bbname);
+			void **q=map_get(&bb_name_range_dict,bbname);
+			if(!q){
+				FATAL("THIS SHOULD NOT HAPPEN! %s",node->bbname);
+			}
+			strcpy(node->bbrange,(char*)*q);
 		}
+		//OKF("node->bbrange:%s",node->bbrange);
 		//if(!strcmp("ttgload.c:2712:12",bbname))FATAL("###########%s,rid=%d",bbname,rid);
+
 		node->rid=rid;
 		node->cov=0;
 		node->distance=-1.0;
@@ -3883,7 +4015,7 @@ static CFG * loadFuncCFG(char * fname) {
 	return cfg;
 }
 static void loadSlicedMask();
-static int loadSlicedMaskFunc(char * fname, char*content);
+static int loadSlicedMaskFunc(char * fname, char* start_name,char *end_name);
 static void loadCFG()
 {
 	u8 *fn = alloc_printf("%s/%s",temp_dir, "/distance.callgraph.txt");
@@ -3941,24 +4073,29 @@ static void loadSlicedMask()
 			ck_free(fn);
 			FATAL("No such file or directory: %s",fn);
 			return;
-
-	  }
-	  ck_free(fn);
-	  fseek (f , 0 , SEEK_END);
-	  int file_size=ftell( f );
-	  if(file_size==0){
-		  fclose(f);
-		  continue;
-	  }
-	  rewind (f);
-	  char * content=(char*)malloc(file_size*sizeof(char));
-	  size_t result=fread(content, 1,file_size, f);
-	  if (result != file_size) {FATAL("Reading error,result=%lu,file_size=%d",result,file_size);}
-	  fclose(f);
-      if(loadSlicedMaskFunc(fname,content)){
-    	  load=1;
-      }
-      free(content);
+        }
+		ck_free(fn);
+		fseek (f , 0 , SEEK_END);
+		int file_size=ftell( f );
+		if(file_size==0){
+			fclose(f);
+		    continue;
+	    }
+		rewind (f);
+		char line[MAX_LINE];
+		while (fgets(line, MAX_LINE, f)) {
+			if(strlen(line)==0) continue;
+			char * n1=strtok(line,",");
+			if(!n1||strlen(n1)==0) continue;
+			char * n2=strtok(NULL,",");
+			if(!n2||strlen(n2)==0) continue;
+			char * bbname1=strdup(n1);
+			char * bbname2=strdup(n2);
+			if(loadSlicedMaskFunc(fname,bbname1,bbname2)){
+				load=1;
+			}
+		}
+		fclose(f);
 	 }
 	 is_mask_ready=load;
 	 /*if(is_mask_ready){
@@ -3969,13 +4106,9 @@ static void loadSlicedMask()
 	 }*/
 	 closedir(dir);
 }
-static int loadSlicedMaskFunc(char * fname, char*content)
-{
-
-
+static CFG * getCFG(char *fname){
 	for (int i=0;i<CFGs->cur_size;i++) {
 		CFG * cfg=(CFG *)CFGs->elements[i];
-		if(strcmp(cfg->fname,fname)) continue;
 		if(!strcmp(cfg->fname,"free")) continue;
 		if(!strcmp(cfg->fname,"malloc")) continue;
 		if(!strcmp(cfg->fname,"strcmp")) continue;
@@ -3993,48 +4126,81 @@ static int loadSlicedMaskFunc(char * fname, char*content)
 		if(!strcmp(cfg->fname,"atoi")) continue;
 		if(!strcmp(cfg->fname,"gets")) continue;
 		if(!strcmp(cfg->fname,"puts")) continue;
-		int load=0;
-		//OKF("load %s.txt start",fname);
-		if(!cfg->rid2node) FATAL("CFG of %s() is empty! rid2node=(nil)",cfg->fname);
-		map_void_t * rid2node = cfg->rid2node;
-		const char *rid_str;
-		map_iter_t node_iter = map_iter(rid2node);
-		while ((rid_str = map_next(rid2node, &node_iter))) {
-			void **p=map_get(rid2node, rid_str);
-			if(!p) FATAL("rid2node is broken, rid=%p,node=(nil)",rid_str);
-			Node * node_from = (Node *)*p;
-			if(node_from->successors){
-				const char *to_rid_str;
-				map_iter_t node_iter = map_iter(node_from->successors);
-				while ((to_rid_str = map_next(node_from->successors, &node_iter))) {
-					void **q=map_get(rid2node, to_rid_str);
-					if(!q) FATAL("rid2node is broken, rid=%p,node=(nil)",rid_str);
-					Node * node_to = (Node *)*q;
-					//FATAL("%s->%s,%s->%s",rid_str,to_rid_str,node_from->bbname,node_to->bbname);
-					char* signature=NULL;
-					if(!strstr(node_from->bbname,"@")&&!strstr(node_to->bbname,"@")){
-						signature=alloc_printf("%s,%s",node_from->bbname,node_to->bbname);
-					}else if(strstr(node_from->bbname,"@")&&!strstr(node_to->bbname,"@")){
-						signature=alloc_printf("\n,%s",node_to->bbname);
-					}else if(!strstr(node_from->bbname,"@")&&strstr(node_to->bbname,"@")){
-						signature=alloc_printf("%s,\n",node_from->bbname);
-					}else{//@->@ this really will happen!!!
-					}
-					if(signature && strstr(content,signature)){
+		if(!strcmp(cfg->fname,fname))
+			return cfg;
+	}
+	return NULL;
+}
+static int inrange(char * range, char * bbname){
+	if(!bbname || 0==strlen(bbname) || strstr(bbname,"@"))return 0;
+
+	char *name=strdup(bbname);
+	char *filename=strtok(name,":");
+	int line=atoi(strtok(NULL,":"));
+	int col=atoi(strtok(NULL,""));
+	free(name);
+
+	char *r =strdup(range);
+	char * s_lc=strtok(r,";");
+	char * e_lc=strtok(NULL,";");
+
+	int sl=atoi(strtok(s_lc,":"));
+	int sc=atoi(strtok(NULL,":"));
+
+	int el=atoi(strtok(e_lc,":"));
+	int ec=atoi(strtok(NULL,":"));
+
+	if( line < sl || line > el ||(line==sl && col < sc )||(line==el && col > ec )){
+		return 0;
+	}else{
+		OKF("IN range:%s,bbname:%s",range,bbname);
+		return 1;
+	}
+	free(r);
+
+}
+static int loadSlicedMaskFunc(char * fname, char* start_name,char *end_name)
+{
+
+	CFG * cfg=getCFG(fname);
+	if(!cfg) return 0;
+	int load=0;
+	//OKF("load %s.txt start",fname);
+	if(!cfg->rid2node) FATAL("CFG of %s() is empty! rid2node=(nil)",cfg->fname);
+	map_void_t * rid2node = cfg->rid2node;
+	const char *rid_str;
+	map_iter_t node_iter = map_iter(rid2node);
+	while ((rid_str = map_next(rid2node, &node_iter))) {
+		void **p=map_get(rid2node, rid_str);
+		if(!p) FATAL("rid2node is broken, rid=%p,node=(nil)",rid_str);
+		Node * node_from = (Node *)*p;
+		if(node_from->successors){
+			const char *to_rid_str;
+			map_iter_t node_iter = map_iter(node_from->successors);
+			while ((to_rid_str = map_next(node_from->successors, &node_iter))) {
+				void **q=map_get(rid2node, to_rid_str);
+				if(!q) FATAL("rid2node is broken, rid=%p,node=(nil)",rid_str);
+				Node * node_to = (Node *)*q;
+				//FATAL("%s->%s,%s->%s",rid_str,to_rid_str,node_from->bbname,node_to->bbname);
+
+				if(!strstr(node_from->bbname,"@")&&!strstr(node_to->bbname,"@")){
+					if(inrange(node_from->bbrange,start_name) && inrange(node_to->bbrange,end_name)){
 						int pos=(node_from->rid<<1)^node_to->rid;
 						int offset=pos%8;
 						mask[pos>>3]|=(0x80>>offset);
 						//WARNF("edge:%d",pos);
 						load=1;
 					}
-					ck_free(signature);
+				}else if(strstr(node_from->bbname,"@")&&!strstr(node_to->bbname,"@")){
+					//signature=alloc_printf("\n,%s",node_to->bbname);
+				}else if(!strstr(node_from->bbname,"@")&&strstr(node_to->bbname,"@")){
+					//signature=alloc_printf("%s,\n",node_from->bbname);
+				}else{//@->@ this really will happen!!!
 				}
 			}
 		}
-		//OKF("load %s.txt finish",fname);
-		return load;
-    }
-	return 0;
+	}
+	return load;
 }
 
 
@@ -4151,7 +4317,7 @@ static int update_margin_bbs(int len)
 								target_bb->born_cycle=queue_cycle;
 								strcpy(target_bb->function,fname);
 								OKF("len=%d",len);
-								OKF("target_bb:%s",target_bb->node->bbname);
+								OKF("Update target_bb:%s,d=%0.3f",target_bb->node->bbname,target_bb->node->distance);
 								updated=1;
 							}
 
@@ -4627,7 +4793,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     int trigger_target=0;
 	if(target_bb->node && (0xffffffffffffffff!=cur[target_bb->node->rid])){//trigger target
 		trigger_target=1;
-        OKF("Trigger:%s",target_bb->node->bbname);
+        //OKF("Trigger:%s",target_bb->node->bbname);
 //		switch (target_bb->node->branch_type)
 //		{
 //			case UNKNOWN:
@@ -4687,8 +4853,8 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 //					  }
 //				}
 //		}
-	}/*else{
-             if(cycles_wo_finds<1)return 0;
+	}/*else if(target_bb->node){
+             if(cycles_wo_finds<1) return 0;
         }*/
     if (!hnb) {
     	if (crash_mode) total_crashes++;
@@ -4878,7 +5044,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
       unique_crashes++;
 
       /* add by yangke start */
-      if(unique_crashes==100){
+      if(unique_crashes==10000||get_cur_time() - start_time>14400000){
       OKF("First Crash is Achieved! Exit now!");
       u8 * statistic_file_name=alloc_printf("%s/statistics", out_dir);
       u8 * info=alloc_printf("mon/rand mut_times:%d|%d,%0.2f,win_times,%d|%d\n",monitor_mut,random_mut,(float)monitor_mut/(float)random_mut,monitor_win,random_win);
@@ -6415,8 +6581,14 @@ static u32 calculate_score(struct queue_entry* q) {
 
   }
   /*add by yangke start*/
-  //perf_score*=1<<q->valid_cov;
-  /*add by yangke start*/
+  if(q->valid_cov>0)
+  {
+	  perf_score*=2.0;
+	  //q->valid_cov--;
+  }else{
+	  perf_score/=2.0;
+  }
+  /*add by yangke end*/
   perf_score *= power_factor;
 
   /* Make sure that we don't go over limit. */

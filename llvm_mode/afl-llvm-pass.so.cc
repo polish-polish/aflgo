@@ -108,7 +108,8 @@ protected:
 	size_t hashName(Value *v);
 	void debug(Value *v,std::string info="#Value#--");
 	std::string getBBName(BasicBlock &BB);
-	std::string bbRecord(unsigned int cur_loc, BasicBlock &BB, std::ofstream &bbname_id_pairs);
+	std::string getBBRange(BasicBlock &BB);
+	std::string bbRecord(unsigned int cur_loc, BasicBlock &BB, std::ofstream &bbname_id_pairs,std::ofstream &bb_range_dict);
 
 	std::string getAnswerICmp(ICmpInst * ICmp);
 	std::string getAnswerSwitch(SwitchInst * SI, std::map<std::string, int> bb_to_dis, std::vector < std::string > basic_blocks);
@@ -159,7 +160,7 @@ unsigned AFLCoverage::lattice = 0;//shr step
  * e.g. jdmarker.c:601:32
  * */
 std::string AFLCoverage::bbRecord(unsigned int cur_loc, BasicBlock &BB,
-		std::ofstream &bbname_id_pairs) {
+		std::ofstream &bbname_id_pairs, std::ofstream &bb_range_dict) {
 	std::string id_str="";
 	std::string loc_str="";
 	std::string bb_cnt_str="";
@@ -171,7 +172,9 @@ std::string AFLCoverage::bbRecord(unsigned int cur_loc, BasicBlock &BB,
 	ss<<bb_cnt;
 	ss>>bb_cnt_str;
 	//id_str=";";
+
 	id_str=getBBName(BB)+";";
+	bb_range_dict<<id_str<<getBBRange(BB)<<"\n";
 	for (auto pit = pred_begin(&BB), pet = pred_end(&BB); pit != pet; ++pit)
 	{
 		BasicBlock* predecessor = *pit;
@@ -352,13 +355,83 @@ std::string AFLCoverage::getBBName(BasicBlock &BB) {
 
 				bb_name = filename + ":" + std::to_string(line) + ":" +std::to_string(column);
 				return bb_name;
-				//break;
 			}
 		}
 	}
 
 	if (bb_name.size()>0){
 		return bb_name;
+	}else{
+		/*std::string Str;
+		raw_string_ostream OS(Str);
+
+		BB.printAsOperand(OS, false);
+		return OS.str();*/
+		return "@";
+	}
+}
+std::string AFLCoverage::getBBRange(BasicBlock &BB) {
+
+	int start_line=-1;
+	int start_col=-1;
+	int end_line=-1;
+	int end_col=-1;
+
+	std::string filename;
+	int flag=0;
+	int line,column;
+	for (auto &I : BB) {
+#ifdef LLVM_OLD_DEBUG_API
+		DebugLoc Loc = I.getDebugLoc();
+		if (!Loc.isUnknown()) {
+
+			DILocation cDILoc(Loc.getAsMDNode(M.getContext()));
+			DILocation oDILoc = cDILoc.getOrigLocation();
+
+			line = oDILoc.getLineNumber();
+			filename = oDILoc.getFilename().str();
+
+			if (filename.empty()) {
+				line = cDILoc.getLineNumber();
+				filename = cDILoc.getFilename().str();
+			}
+#else
+
+		if (DILocation *Loc = I.getDebugLoc()) {
+			line = Loc->getLine();
+			column = Loc->getColumn();
+			filename = Loc->getFilename().str();
+
+			if (filename.empty()) {
+				DILocation *oDILoc = Loc->getInlinedAt();
+				if (oDILoc) {
+					line = oDILoc->getLine();
+					filename = oDILoc->getFilename().str();
+				}
+			}
+
+#endif /* LLVM_OLD_DEBUG_API */
+
+			/* Don't worry about external libs */
+			std::string Xlibs("/usr/");
+			if (filename.empty() || line == 0
+					|| !filename.compare(0, Xlibs.size(), Xlibs))
+				continue;
+
+			if (start_line==-1) {
+
+				start_line = end_line = line;
+				start_col = end_col = column;
+
+			}else if(line>=start_line){
+				end_line = line;
+				end_col = column;
+			}
+		}
+	}
+
+	if (start_line>=0){
+		return std::to_string(start_line) + ":" +std::to_string(start_col) + ";" + std::to_string(end_line) + ":" +std::to_string(end_col);;
 	}else{
 		/*std::string Str;
 		raw_string_ostream OS(Str);
@@ -1305,6 +1378,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 				WARNF("OutDirectory is empty!");
 			}
 			std::ofstream bbname_id_pairs;
+			std::ofstream bb_range_dict;
 			std::string rid_bbname_pairs_dir(OutDirectory + "/rid_bbname_pairs");
 			struct stat sb;
 			if (stat(rid_bbname_pairs_dir.c_str(), &sb) != 0) {
@@ -1322,6 +1396,8 @@ bool AFLCoverage::runOnModule(Module &M) {
 				//bbname_id_pairs.close();
 				bbname_id_pairs.open(rid_bbname_pairs_dir + "/" + F.getName().str() +".rid_bbname_pairs.txt",
 					std::ofstream::out | std::ofstream::app);
+				bb_range_dict.open(rid_bbname_pairs_dir + "/" + F.getName().str() +".bb_range_dict.txt",
+									std::ofstream::out | std::ofstream::app);
 				if(F.getName().str()=="png_read_row"){
 					OKF("%s",F.getName().data());
 				}
@@ -1453,7 +1529,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 				/*add by yangke start*/
 				if (!OutDirectory.empty()){
 
-					std::string key_str=bbRecord(cur_loc, BB, bbname_id_pairs);
+					std::string key_str=bbRecord(cur_loc, BB, bbname_id_pairs,bb_range_dict);
 					if (bb_branch_info.is_open()){
 						bbBranchRecord(key_str, BB, bb_branch_info, bb_to_dis, basic_blocks);
 					}
@@ -1573,6 +1649,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 			}
 			/*add by yangke start*/
 			bbname_id_pairs.close();
+			bb_range_dict.close();
 			bb_branch_info.close();
 			/*add by yangke end*/
 		}
