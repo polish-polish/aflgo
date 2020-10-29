@@ -3544,7 +3544,7 @@ static inline void init_container(Container * c){
 static inline void add_element(Container * c, void * element){
 	if(c->cur_size>=c->max_size){
 		c->max_size<<=1;
-		c->elements=(void**)realloc(c->elements,c->max_size);
+		c->elements=(void**)realloc(c->elements,c->max_size*sizeof(Node*));
 	}
 	c->elements[c->cur_size++]=element;
 }
