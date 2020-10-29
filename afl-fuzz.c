@@ -3728,7 +3728,7 @@ static inline void init_container(Container * c){
 static inline void add_element(Container * c, void * element){
 	if(c->cur_size>=c->max_size){
 		c->max_size<<=1;
-		c->elements=(void**)realloc(c->elements,c->max_size*sizeof(Node*));
+		c->elements=(void**)realloc(c->elements,c->max_size*(sizeof(void*)));
 	}
 	c->elements[c->cur_size++]=element;
 }
@@ -3832,12 +3832,16 @@ static CFG * loadFuncCFG(char * fname) {
 		if(!fi){
 			FATAL("%s",tmp);
 		}
-		OKF("RANGE:%s\n",fi+1);
-		char * last=strdup(++fi);//strdup is required as the tmp string will be recycle
-		last[strlen(last)-1]='\0';//remove the return character
+		char * range=strdup(++fi);//strdup is required as the tmp string will be recycle
+		int last=strlen(range)-1;
+		if(last==-1) {
+			free(range);
+			continue;
+		}
+		if(range[last]=='\n')
+		    range[last]='\0';//remove the return character
 		char * name=strdup(strtok(tmp,";"));//char * incr_id=strtok(tmp,"|");
-		OKF("NAME:%s\n",name);
-		map_set(&bb_name_range_dict,name,last);
+		map_set(&bb_name_range_dict,name,range);
 	}
 	ck_free(fn);
 	fclose(f);
@@ -3935,6 +3939,7 @@ static CFG * loadFuncCFG(char * fname) {
 	fclose(f);
 
 	map_deinit(&bb_branch_info);//deinit bb_branch_info
+	map_deinit(&bb_name_range_dict);//deinit bb_name_range_dict
 
 
     /*2. init out_edge_index */
@@ -4088,8 +4093,12 @@ static void loadSlicedMask()
 			char * n1=strtok(line,",");
 			if(!n1||strlen(n1)==0) continue;
 			char * n2=strtok(NULL,",");
-			if(!n2||strlen(n2)==0) continue;
+			if(!n2||*n2=='\0'||*n2=='\n') continue;
 			char * bbname1=strdup(n1);
+			int last=strlen(n2)-1;
+			if(n2[last]=='\n'){
+				n2[last]='\0';
+			}
 			char * bbname2=strdup(n2);
 			if(loadSlicedMaskFunc(fname,bbname1,bbname2)){
 				load=1;
@@ -4153,7 +4162,7 @@ static int inrange(char * range, char * bbname){
 	if( line < sl || line > el ||(line==sl && col < sc )||(line==el && col > ec )){
 		return 0;
 	}else{
-		OKF("IN range:%s,bbname:%s",range,bbname);
+		//OKF("IN range:%s,bbname:%s",range,bbname);
 		return 1;
 	}
 	free(r);
@@ -4184,7 +4193,10 @@ static int loadSlicedMaskFunc(char * fname, char* start_name,char *end_name)
 				//FATAL("%s->%s,%s->%s",rid_str,to_rid_str,node_from->bbname,node_to->bbname);
 
 				if(!strstr(node_from->bbname,"@")&&!strstr(node_to->bbname,"@")){
-					if(inrange(node_from->bbrange,start_name) && inrange(node_to->bbrange,end_name)){
+					//if(inrange(node_from->bbrange,start_name) && inrange(node_to->bbrange,end_name)){
+					if(inrange(node_from->bbrange,start_name) || inrange(node_from->bbrange,end_name)
+							|| inrange(node_to->bbrange,start_name) || inrange(node_to->bbrange,end_name)
+							){
 						int pos=(node_from->rid<<1)^node_to->rid;
 						int offset=pos%8;
 						mask[pos>>3]|=(0x80>>offset);
